@@ -134,49 +134,33 @@ Created automatically via Settings UI:
   "logo_path": "C:/LaundryLMS/logo.png"
 }
 
-Testing
-bash
-# Run all tests
-pytest -q
 
-# Run specific test file
-pytest tests/test_models.py -v
-Backup & Restore
-Create a backup
-bash
-python -c "from backup import backup_database; print(backup_database())"
-Restore from backup
-bash
-python -c "from backup import restore_database; restore_database('backups/lms_backup_2026-03-01_18-30.db')"
-Common Issues
-Placeholder pages in packaged EXE
-Cause: PyInstaller missed page modules.
 
-Fix: Add explicit --hidden-import flags or import hints in dashboard.py:
+## Testing
 
-python
+| Command | Description |
+|---------|-------------|
+| `pytest -q` | Run all tests |
+| `pytest tests/test_models.py -v` | Run specific test file |
+
+## Backup & Restore
+
+| Operation | Command |
+|-----------|---------|
+| Create a backup | `python -c "from backup import backup_database; print(backup_database())"` |
+| Restore from backup | `python -c "from backup import restore_database; restore_database('backups/lms_backup_2026-03-01_18-30.db')"` |
+
+## Common Issues
+
+### Placeholder pages in packaged EXE
+
+| | |
+|-|-|
+| **Cause** | PyInstaller missed page modules |
+| **Fix** | Add explicit `--hidden-import` flags or import hints in `dashboard.py` |
+
+```python
 try:
     import orders, customers, payments, reports, users, settings
 except ImportError as e:
     print(f"Import error: {e}")
-Database not found
-Cause: Incorrect path resolution in frozen executable.
-
-Fix: Ensure database.get_db_path() returns %APPDATA%\LaundryLMS\lms.db for packaged builds.
-
-License
-MIT License
-
-Contributing
-Fork the repository
-
-Create a feature branch
-
-Commit your changes
-
-Push to the branch
-
-Open a Pull Request
-
-Contact
-baffoekuuku9@gmail.com
