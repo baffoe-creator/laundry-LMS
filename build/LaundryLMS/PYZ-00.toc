@@ -574,6 +574,8 @@
   ('pkgutil', 'C:\\Python312\\Lib\\pkgutil.py', 'PYMODULE'),
   ('platform', 'C:\\Python312\\Lib\\platform.py', 'PYMODULE'),
   ('pprint', 'C:\\Python312\\Lib\\pprint.py', 'PYMODULE'),
+  ('pricing', 'C:\\Users\\hp\\laundry-lms\\pricing.py', 'PYMODULE'),
+  ('pricing_admin', 'C:\\Users\\hp\\laundry-lms\\pricing_admin.py', 'PYMODULE'),
   ('py_compile', 'C:\\Python312\\Lib\\py_compile.py', 'PYMODULE'),
   ('pydoc', 'C:\\Python312\\Lib\\pydoc.py', 'PYMODULE'),
   ('pydoc_data', 'C:\\Python312\\Lib\\pydoc_data\\__init__.py', 'PYMODULE'),

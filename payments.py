@@ -5,21 +5,18 @@ payments.py
 PyQt5-based Payments UI for the Laundry Management System (LMS).
 
 Features:
-- Search/select an order by Order ID or Invoice string (e.g., ORD-20260226-000001)
-- Browse recent orders (most recent 20) and pick one
+- Search/select an order by Order ID or Invoice string
+- Browse recent orders and pick one
 - View selected order details (customer, items, totals, balance)
 - Record a payment (amount + optional notes)
-  - Uses models.record_payment to persist and update the order's paid_amount and balance
 - View payment history for the selected order
-
-Usage:
-    python payments.py
+- Customer Ledger panel showing outstanding balance and recent ledger entries (Feature 1e)
+- Post Adjustment button for admin/manager roles
 
 Design notes:
-- This module uses the same DAL (models.py) you already have.
-- Amounts are rounded/displayed to 2 decimals. We allow partial or full payments.
-- If an overpayment occurs (amount > balance) we allow it but show a warning and still record it.
-- The window is sized and laid out for clarity for cashier usage.
+- Amounts are rounded/displayed to 2 decimals.
+- Ledger panel shows running balance with color coding.
+- Adjustments only available to admin/manager.
 """
 
 import sys
@@ -41,8 +38,10 @@ from PyQt5.QtWidgets import (
     QTextEdit,
     QListWidget,
     QListWidgetItem,
+    QDialog,
+    QDialogButtonBox,
 )
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt
 
 import models
@@ -54,35 +53,77 @@ def fmt_money(v: float) -> str:
 
 
 def parse_invoice_to_order_id(text: str) -> Optional[int]:
-    """
-    Accept an integer order id or an invoice-id string like ORD-YYYYMMDD-000123
-    and return the integer order_id or None if parsing fails.
-    """
+    """Accept integer order id or invoice string and return order_id."""
     if not text:
         return None
     text = text.strip()
-    # If numeric only, treat as order_id
     if text.isdigit():
         return int(text)
-    # If starts with ORD-...-<number>
     if text.upper().startswith("ORD-"):
         parts = text.split("-")
         if len(parts) >= 3:
             last = parts[-1]
-            # last part may be padded with zeros
             if last.isdigit():
                 return int(last)
     return None
 
 
+class AdjustmentDialog(QDialog):
+    """Dialog for posting manual ledger adjustments (admin/manager only)."""
+    
+    def __init__(self, customer_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Post Ledger Adjustment")
+        self.setMinimumWidth(400)
+        
+        layout = QVBoxLayout()
+        
+        layout.addWidget(QLabel(f"Customer: {customer_name}"))
+        layout.addWidget(QLabel("Enter amount (positive = add to debt, negative = reduce debt):"))
+        
+        self.amount_spin = QDoubleSpinBox()
+        self.amount_spin.setDecimals(2)
+        self.amount_spin.setMinimum(-999999.99)
+        self.amount_spin.setMaximum(999999.99)
+        self.amount_spin.setValue(0.00)
+        layout.addWidget(self.amount_spin)
+        
+        layout.addWidget(QLabel("Notes (required):"))
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setPlaceholderText("Reason for adjustment")
+        self.notes_edit.setMaximumHeight(80)
+        layout.addWidget(self.notes_edit)
+        
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+        
+        self.setLayout(layout)
+    
+    def get_values(self) -> tuple:
+        return (self.amount_spin.value(), self.notes_edit.toPlainText().strip())
+
+
 class PaymentsWindow(QWidget):
     def __init__(self, current_user: Optional[Dict[str, Any]] = None):
         super().__init__()
-        self.current_user = current_user or database.get_user_by_username("admin")
+        # Handle both dict and sqlite3.Row
+        if current_user is None:
+            current_user = database.get_user_by_username("admin")
+        
+        # Convert sqlite3.Row to dict if needed
+        if hasattr(current_user, 'keys') and not isinstance(current_user, dict):
+            self.current_user = dict(current_user)
+        else:
+            self.current_user = current_user or {}
+            
         if not self.current_user:
             raise RuntimeError("No current user available")
+        
+        self.role = str(self.current_user.get("role", "cashier")).lower()
         self.setWindowTitle("LMS — Payments")
-        self.setMinimumSize(1000, 640)
+        self.setMinimumSize(1200, 700)
         self.selected_order_id: Optional[int] = None
         self.order_snapshot: Optional[Dict[str, Any]] = None
         self._build_ui()
@@ -167,10 +208,24 @@ class PaymentsWindow(QWidget):
         totals_layout.addRow("Balance:", self.lbl_balance)
         totals_box.setLayout(totals_layout)
         middle_col.addWidget(totals_box)
+
+        # Payment history table
+        history_box = QGroupBox("Payment History")
+        hist_layout = QVBoxLayout()
+        self.pay_table = QTableWidget()
+        self.pay_table.setColumnCount(3)
+        self.pay_table.setHorizontalHeaderLabels(["Date", "Amount", "Notes"])
+        self.pay_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        hist_layout.addWidget(self.pay_table)
+        history_box.setLayout(hist_layout)
+        middle_col.addWidget(history_box)
+        
         middle_col.addStretch(1)
 
-        # ---- Right: Payment form and history ----
+        # ---- Right: Payment form and Customer Ledger ----
         right_col = QVBoxLayout()
+        
+        # Payment form
         pay_box = QGroupBox("Record Payment")
         pay_layout = QFormLayout()
         self.pay_amount = QDoubleSpinBox()
@@ -181,7 +236,7 @@ class PaymentsWindow(QWidget):
         self.pay_amount.setFont(font_input)
         self.pay_notes = QTextEdit()
         self.pay_notes.setFont(font_input)
-        self.pay_notes.setFixedHeight(80)
+        self.pay_notes.setFixedHeight(60)
         pay_layout.addRow("Amount:", self.pay_amount)
         pay_layout.addRow("Notes:", self.pay_notes)
         record_btn = QPushButton("Record Payment")
@@ -190,20 +245,38 @@ class PaymentsWindow(QWidget):
         pay_box.setLayout(pay_layout)
         right_col.addWidget(pay_box)
 
-        history_box = QGroupBox("Payment History")
-        hist_layout = QVBoxLayout()
-        self.pay_table = QTableWidget()
-        self.pay_table.setColumnCount(3)
-        self.pay_table.setHorizontalHeaderLabels(["Date", "Amount", "Notes"])
-        self.pay_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        hist_layout.addWidget(self.pay_table)
-        history_box.setLayout(hist_layout)
-        right_col.addWidget(history_box)
+        # Customer Ledger panel (Feature 1e)
+        ledger_box = QGroupBox("Customer Ledger — Outstanding Balance")
+        ledger_layout = QVBoxLayout()
+        
+        # Outstanding balance display
+        self.balance_label = QLabel("Total owed: GH₵ 0.00")
+        self.balance_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        ledger_layout.addWidget(self.balance_label)
+        
+        # Post Adjustment button (admin/manager only)
+        if self.role in ("admin", "manager"):
+            self.adjust_btn = QPushButton("Post Adjustment")
+            self.adjust_btn.clicked.connect(self.post_adjustment_clicked)
+            ledger_layout.addWidget(self.adjust_btn)
+        
+        # Ledger entries table
+        self.ledger_table = QTableWidget()
+        self.ledger_table.setColumnCount(6)
+        self.ledger_table.setHorizontalHeaderLabels([
+            "Date", "Type", "Amount (GH₵)", "Running Balance (GH₵)", "Order ID", "Notes"
+        ])
+        self.ledger_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.ledger_table.horizontalHeader().setStretchLastSection(True)
+        ledger_layout.addWidget(self.ledger_table)
+        
+        ledger_box.setLayout(ledger_layout)
+        right_col.addWidget(ledger_box)
         right_col.addStretch(1)
 
         # Place columns in main layout
-        main.addLayout(left_col, stretch=3)
-        main.addLayout(middle_col, stretch=5)
+        main.addLayout(left_col, stretch=2)
+        main.addLayout(middle_col, stretch=4)
         main.addLayout(right_col, stretch=3)
         self.setLayout(main)
 
@@ -212,9 +285,7 @@ class PaymentsWindow(QWidget):
 
     # ---- Recent orders loader ----
     def load_recent_orders(self):
-        """
-        Load the most recent 20 orders and show in the recent_list.
-        """
+        """Load the most recent 20 orders and show in the recent_list."""
         conn = database.connect_db()
         cur = conn.cursor()
         cur.execute(
@@ -248,8 +319,94 @@ class PaymentsWindow(QWidget):
         if oid is None:
             QMessageBox.warning(self, "Parse error", "Could not parse order id from input. Use numeric id or ORD-... format.")
             return
-        # Try to select
         self.select_order(oid)
+
+    # ---- Customer Ledger methods (Feature 1e) ----
+    def load_customer_ledger(self, customer_id: int, customer_name: str):
+        """Load and display customer ledger entries."""
+        try:
+            balance = models.get_customer_outstanding_balance(customer_id)
+            ledger = models.get_customer_ledger(customer_id, limit=20)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load ledger: {e}")
+            return
+        
+        # Update balance label with color coding
+        balance_text = f"Total owed by {customer_name}: GH₵ {fmt_money(balance)}"
+        self.balance_label.setText(balance_text)
+        if balance > 0.01:
+            self.balance_label.setStyleSheet("color: red;")
+        elif balance < -0.01:
+            self.balance_label.setStyleSheet("color: green;")
+        else:
+            self.balance_label.setStyleSheet("color: black;")
+        
+        # Populate ledger table
+        self.ledger_table.setRowCount(len(ledger))
+        for i, entry in enumerate(ledger):
+            # Date
+            date_str = entry.get("entry_date", "")
+            if date_str and " " in date_str:
+                date_str = date_str.split(" ")[0]
+            self.ledger_table.setItem(i, 0, QTableWidgetItem(date_str))
+            
+            # Type with color coding
+            entry_type = entry.get("entry_type", "")
+            type_item = QTableWidgetItem(entry_type)
+            if entry_type == "charge":
+                type_item.setForeground(QColor(255, 0, 0))  # Red
+            elif entry_type == "payment":
+                type_item.setForeground(QColor(0, 128, 0))  # Green
+            elif entry_type == "adjustment":
+                type_item.setForeground(QColor(255, 165, 0))  # Orange
+            self.ledger_table.setItem(i, 1, type_item)
+            
+            # Amount
+            amount = entry.get("amount", 0)
+            amount_item = QTableWidgetItem(fmt_money(abs(amount)))
+            if amount > 0:
+                amount_item.setForeground(QColor(255, 0, 0))  # Red for positive (debt)
+            elif amount < 0:
+                amount_item.setForeground(QColor(0, 128, 0))  # Green for negative (payment)
+            self.ledger_table.setItem(i, 2, amount_item)
+            
+            # Running balance
+            self.ledger_table.setItem(i, 3, QTableWidgetItem(fmt_money(entry.get("running_balance", 0))))
+            
+            # Order ID
+            order_id = entry.get("order_id", "")
+            self.ledger_table.setItem(i, 4, QTableWidgetItem(str(order_id) if order_id else ""))
+            
+            # Notes
+            self.ledger_table.setItem(i, 5, QTableWidgetItem(entry.get("notes", "")))
+
+    def post_adjustment_clicked(self):
+        """Handle Post Adjustment button click."""
+        if not self.selected_order_id or not self.order_snapshot:
+            QMessageBox.warning(self, "No order", "Select an order first.")
+            return
+        
+        customer = self.order_snapshot.get("customer", {})
+        if not customer:
+            return
+        
+        customer_name = customer.get("name", "Unknown")
+        customer_id = customer.get("customer_id")
+        
+        dlg = AdjustmentDialog(customer_name, self)
+        if dlg.exec_() == QDialog.Accepted:
+            amount, notes = dlg.get_values()
+            if not notes:
+                QMessageBox.warning(self, "Missing notes", "Please enter notes for this adjustment.")
+                return
+            
+            try:
+                models.post_ledger_adjustment(customer_id, amount, notes, self.selected_order_id)
+                QMessageBox.information(self, "Success", "Adjustment posted successfully.")
+                # Refresh ledger display
+                self.load_customer_ledger(customer_id, customer_name)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to post adjustment: {e}")
 
     # ---- Select and display an order ----
     def select_order(self, order_id: int):
@@ -260,11 +417,15 @@ class PaymentsWindow(QWidget):
             return
         self.selected_order_id = order_id
         self.order_snapshot = snap
+        
         # Fill order info
         order = snap["order"]
         customer = snap.get("customer") or {}
+        customer_id = customer.get("customer_id")
+        customer_name = customer.get("name", "Unknown")
+        
         self.lbl_order_id.setText(f"{order['order_id']}   ({models.format_invoice_number(order['order_id'], order['order_date'])})")
-        self.lbl_customer.setText(f"{customer.get('name') or 'Unknown'} ({customer.get('phone') or ''})")
+        self.lbl_customer.setText(f"{customer_name} ({customer.get('phone') or ''})")
         self.lbl_order_date.setText(order.get("order_date") or "-")
         self.lbl_status.setText(order.get("status") or "-")
         self.lbl_instructions.setText(order.get("special_instructions") or "-")
@@ -279,7 +440,7 @@ class PaymentsWindow(QWidget):
             self.items_table.setItem(i, 3, QTableWidgetItem(fmt_money(float(it.get("unit_price") or 0.0))))
             self.items_table.setItem(i, 4, QTableWidgetItem(fmt_money(float(it.get("subtotal") or 0.0))))
 
-        # Totals (ensure totals are up-to-date)
+        # Totals
         totals = models.compute_order_totals(order_id)
         self.lbl_subtotal.setText(fmt_money(totals["subtotal"]))
         self.lbl_discount.setText(fmt_money(totals["discount_amount"]))
@@ -287,13 +448,17 @@ class PaymentsWindow(QWidget):
         self.lbl_paid.setText(fmt_money(totals["paid_amount"]))
         self.lbl_balance.setText(fmt_money(totals["balance"]))
 
-        # Populate payment history
+        # Payment history
         payments = snap.get("payments", [])
         self.pay_table.setRowCount(len(payments))
         for i, p in enumerate(payments):
             self.pay_table.setItem(i, 0, QTableWidgetItem(str(p.get("payment_date") or "")))
             self.pay_table.setItem(i, 1, QTableWidgetItem(fmt_money(float(p.get("amount") or 0.0))))
             self.pay_table.setItem(i, 2, QTableWidgetItem(str(p.get("notes") or "")))
+
+        # Load customer ledger if we have customer_id
+        if customer_id:
+            self.load_customer_ledger(customer_id, customer_name)
 
     # ---- Record payment handler ----
     def record_payment_clicked(self):
@@ -306,11 +471,9 @@ class PaymentsWindow(QWidget):
             QMessageBox.warning(self, "Invalid amount", "Enter an amount greater than zero.")
             return
 
-        # Fetch current balance to warn about overpayment
         balances = models.compute_order_totals(self.selected_order_id)
         current_balance = float(balances["balance"])
         if amount > (current_balance + 0.0001):
-            # Warn but allow
             res = QMessageBox.question(
                 self,
                 "Overpayment",
@@ -326,15 +489,12 @@ class PaymentsWindow(QWidget):
             QMessageBox.critical(self, "Recording error", f"Failed to record payment: {e}")
             return
 
-        # Clear payment form
         self.pay_amount.setValue(0.0)
         self.pay_notes.clear()
-
-        # Refresh order snapshot and UI
         self.select_order(self.selected_order_id)
         QMessageBox.information(self, "Payment recorded", f"Payment recorded (id={payment_id}).")
 
-    # ---- Utility: expose as standalone window ----
+
 def main():
     app = QApplication(sys.argv)
     admin = database.get_user_by_username("admin")

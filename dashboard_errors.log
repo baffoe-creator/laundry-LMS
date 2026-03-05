@@ -1,0 +1,13 @@
+Error importing ReportsWindow from reports:
+'ReportsWindow' object has no attribute 'run_daily_report'
+Traceback (most recent call last):
+  File "C:\Users\hp\laundry-lms\dashboard.py", line 92, in _safe_import_page
+    return cls(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\laundry-lms\reports.py", line 500, in __init__
+    self._build_ui()
+  File "C:\Users\hp\laundry-lms\reports.py", line 622, in _build_ui
+    run_btn.clicked.connect(self.run_daily_report)
+                            ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ReportsWindow' object has no attribute 'run_daily_report'
+

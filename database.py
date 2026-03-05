@@ -7,16 +7,18 @@ Initializes the SQLite database for the Laundry Management System (LMS).
 Responsibilities:
 - Create lms.db (by default) if absent
 - Create tables per project schema:
-    users, customers, orders, order_items, payments
+    users, customers, orders, order_items, payments, price_catalogue, customer_ledger
+- Add customer_type column to customers table
 - Seed a default admin user (username: admin, password: admin123)
+- Seed price catalogue from pricing.py
 - Provide helper functions to connect to the DB and hash/verify passwords
 
 Notes / decisions:
 - To distinguish discount types (percent vs fixed) I've added orders.discount_type TEXT.
-  This is safer than encoding the type into a single numeric column.
-- Password hashing uses PBKDF2-HMAC-SHA256 (built-in, secure for our scope).
-  The password_hash column stores: iterations$salt_hex$hash_hex
+- Password hashing uses PBKDF2-HMAC-SHA256.
 - The DB file path can be overridden using the LMS_DB_PATH environment variable.
+- Added customer_ledger table for debt carry-forward (Feature 1a)
+- Added migrate_ledger_from_existing_data() for backward compatibility (Feature 1b)
 
 Run:
     python database.py
@@ -29,12 +31,13 @@ import hashlib
 import binascii
 import secrets
 from typing import Optional, Tuple
+import pricing  # For price catalogue seeding
 
 # Default DB filename (can be overridden with LMS_DB_PATH env var)
 DEFAULT_DB = os.environ.get("LMS_DB_PATH", "lms.db")
 
 # PBKDF2 configuration
-PBKDF2_ITERATIONS = 100_000  # strong default for desktop app
+PBKDF2_ITERATIONS = 100_000
 
 
 def get_db_path() -> str:
@@ -51,7 +54,6 @@ def connect_db(db_path: Optional[str] = None) -> sqlite3.Connection:
         db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    # Turn on foreign key enforcement
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
@@ -60,8 +62,6 @@ def hash_password(password: str, iterations: int = PBKDF2_ITERATIONS) -> str:
     """
     Hash the password using PBKDF2-HMAC-SHA256.
     Stored format: iterations$salt_hex$hash_hex
-
-    We generate a 16-byte salt using secrets.token_bytes for good entropy.
     """
     if not isinstance(password, bytes):
         password_bytes = password.encode("utf-8")
@@ -85,11 +85,23 @@ def verify_password(stored: str, provided_password: str) -> bool:
         salt = binascii.unhexlify(salt_hex)
         expected = binascii.unhexlify(hash_hex)
     except Exception:
-        # Stored value malformed
         return False
 
     dk = hashlib.pbkdf2_hmac("sha256", provided_password.encode("utf-8"), salt, iterations)
     return secrets.compare_digest(dk, expected)
+
+
+def add_customer_type_column(conn: sqlite3.Connection) -> None:
+    """
+    Safely add customer_type column to customers table if it doesn't exist.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE customers ADD COLUMN customer_type TEXT DEFAULT 'individual'")
+        conn.commit()
+        print("Added customer_type column to customers table")
+    except sqlite3.OperationalError:
+        pass
 
 
 def init_db(db_path: Optional[str] = None, force: bool = False) -> None:
@@ -105,9 +117,6 @@ def init_db(db_path: Optional[str] = None, force: bool = False) -> None:
     conn = connect_db(db_path)
     cur = conn.cursor()
 
-    # Use TEXT for timestamps with default CURRENT_TIMESTAMP for simplicity.
-    # Numeric fields: REAL for amounts (to support decimals), INTEGER for PKs/quantities.
-    # Note: We add orders.discount_type TEXT to indicate 'percent' or 'fixed'.
     cur.executescript(
         """
         BEGIN;
@@ -134,8 +143,8 @@ def init_db(db_path: Optional[str] = None, force: bool = False) -> None:
             order_date            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             collection_date       TEXT,
             status                TEXT NOT NULL DEFAULT 'Received',
-            discount              REAL DEFAULT 0,     -- numeric discount value
-            discount_type         TEXT DEFAULT 'fixed',  -- 'percent' or 'fixed'
+            discount              REAL DEFAULT 0,
+            discount_type         TEXT DEFAULT 'fixed',
             total_amount          REAL DEFAULT 0,
             paid_amount           REAL DEFAULT 0,
             balance               REAL DEFAULT 0,
@@ -164,23 +173,172 @@ def init_db(db_path: Optional[str] = None, force: bool = False) -> None:
             FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
         );
 
-        -- Helpful indexes for common lookups
+        CREATE TABLE IF NOT EXISTS price_catalogue (
+            item_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name      TEXT NOT NULL UNIQUE,
+            price_coloured REAL,
+            price_white    REAL,
+            price_pressing REAL,
+            updated_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- New table for customer ledger (Feature 1a)
+        CREATE TABLE IF NOT EXISTS customer_ledger (
+            ledger_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id    INTEGER NOT NULL,
+            order_id       INTEGER,
+            entry_type     TEXT NOT NULL CHECK(entry_type IN ('charge', 'payment', 'adjustment')),
+            amount         REAL NOT NULL,
+            running_balance REAL NOT NULL DEFAULT 0,
+            notes          TEXT,
+            entry_date     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE,
+            FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE SET NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
         CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
         CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
         CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id);
+        CREATE INDEX IF NOT EXISTS idx_price_catalogue_item ON price_catalogue(item_name);
+        CREATE INDEX IF NOT EXISTS idx_ledger_customer ON customer_ledger(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_ledger_order ON customer_ledger(order_id);
 
         COMMIT;
         """
     )
     conn.commit()
+    
+    add_customer_type_column(conn)
+    
+    conn.close()
+
+
+def migrate_ledger_from_existing_data(db_path: Optional[str] = None) -> None:
+    """
+    One-time migration to populate customer_ledger from existing orders and payments.
+    Idempotent - runs only if ledger is empty.
+    Wrapped in a transaction - all or nothing.
+    (Feature 1b)
+    """
+    db_path = db_path or get_db_path()
+    conn = connect_db(db_path)
+    cur = conn.cursor()
+    
+    # Check if ledger is empty
+    cur.execute("SELECT COUNT(*) as count FROM customer_ledger")
+    if cur.fetchone()["count"] > 0:
+        conn.close()
+        print("Ledger already populated, skipping migration.")
+        return
+    
+    try:
+        cur.execute("BEGIN TRANSACTION")
+        
+        charge_count = 0
+        payment_count = 0
+        
+        # Get all customers
+        cur.execute("SELECT customer_id FROM customers ORDER BY customer_id")
+        customers = cur.fetchall()
+        
+        for cust in customers:
+            customer_id = cust["customer_id"]
+            running_balance = 0.0
+            
+            # Get all finalised orders for this customer (total_amount > 0)
+            cur.execute(
+                """
+                SELECT order_id, order_date, total_amount 
+                FROM orders 
+                WHERE customer_id = ? AND total_amount > 0 
+                ORDER BY order_date ASC
+                """,
+                (customer_id,)
+            )
+            orders = cur.fetchall()
+            
+            for order in orders:
+                # Insert charge entry
+                running_balance += float(order["total_amount"])
+                cur.execute(
+                    """
+                    INSERT INTO customer_ledger 
+                    (customer_id, order_id, entry_type, amount, running_balance, entry_date)
+                    VALUES (?, ?, 'charge', ?, ?, ?)
+                    """,
+                    (customer_id, order["order_id"], float(order["total_amount"]), 
+                     running_balance, order["order_date"])
+                )
+                charge_count += 1
+            
+            # Get all payments for this customer
+            cur.execute(
+                """
+                SELECT p.payment_id, p.order_id, p.amount, p.payment_date, o.customer_id
+                FROM payments p
+                JOIN orders o ON p.order_id = o.order_id
+                WHERE o.customer_id = ?
+                ORDER BY p.payment_date ASC
+                """,
+                (customer_id,)
+            )
+            payments = cur.fetchall()
+            
+            for payment in payments:
+                # Insert payment entry (negative amount)
+                running_balance -= float(payment["amount"])
+                cur.execute(
+                    """
+                    INSERT INTO customer_ledger 
+                    (customer_id, order_id, entry_type, amount, running_balance, notes, entry_date)
+                    VALUES (?, ?, 'payment', ?, ?, ?, ?)
+                    """,
+                    (customer_id, payment["order_id"], -float(payment["amount"]),
+                     running_balance, f"Payment ID: {payment['payment_id']}", payment["payment_date"])
+                )
+                payment_count += 1
+        
+        cur.execute("COMMIT")
+        print(f"Ledger migration complete: {charge_count} charges, {payment_count} payments.")
+        
+    except Exception as e:
+        cur.execute("ROLLBACK")
+        print(f"Ledger migration failed: {e}")
+        raise
+    finally:
+        conn.close()
+
+
+def seed_price_catalogue(db_path: Optional[str] = None) -> None:
+    """
+    Seed the price_catalogue table with data from pricing.py if table is empty.
+    """
+    db_path = db_path or get_db_path()
+    conn = connect_db(db_path)
+    cur = conn.cursor()
+    
+    cur.execute("SELECT COUNT(*) as count FROM price_catalogue")
+    count = cur.fetchone()["count"]
+    
+    if count == 0:
+        for item in pricing.PRICE_CATALOGUE:
+            cur.execute(
+                """
+                INSERT INTO price_catalogue (item_name, price_coloured, price_white, price_pressing)
+                VALUES (?, ?, ?, ?)
+                """,
+                (item["item_name"], item["price_coloured"], item["price_white"], item["price_pressing"])
+            )
+        conn.commit()
+        print(f"Seeded price catalogue with {len(pricing.PRICE_CATALOGUE)} items")
+    
     conn.close()
 
 
 def seed_admin(username: str = "admin", password: str = "admin123", role: str = "admin") -> Tuple[bool, str]:
     """
     Seed a default admin user if it does not already exist.
-    Returns (created, message).
     """
     conn = connect_db()
     cur = conn.cursor()
@@ -208,7 +366,6 @@ def seed_admin(username: str = "admin", password: str = "admin123", role: str = 
 def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
     """
     Convenience helper to fetch user row by username.
-    Returns sqlite3.Row or None.
     """
     conn = connect_db()
     cur = conn.cursor()
@@ -219,12 +376,12 @@ def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
 
 
 if __name__ == "__main__":
-    # Initialize DB and seed admin. Useful for local development/testing.
     print(f"Initializing database at: {get_db_path()}")
     init_db(force=False)
     created, msg = seed_admin()
     print(msg)
-    # Quick verification sample
+    seed_price_catalogue()
+    migrate_ledger_from_existing_data()
     admin_row = get_user_by_username("admin")
     if admin_row:
         print("Admin user present. Username:", admin_row["username"], "Role:", admin_row["role"])

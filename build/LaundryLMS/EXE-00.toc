@@ -68,7 +68,7 @@
  [],
  False,
  False,
- 1772357164,
+ 1772707297,
  [('run.exe',
    'C:\\Users\\hp\\laundry-lms\\.venv\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\run.exe',
    'EXECUTABLE')],
