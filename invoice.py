@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-invoice.py (UPDATED to read persisted settings)
+invoice.py
 
-This replaces/updates the previous invoice.py so that, when company_info is not provided,
-it will read company information from settings.get_company_info(), which persists to config.json.
-
-Everything else (PDF layout, logo support, wrapping, page numbers) stays the same.
+This generates PDF invoices with:
+- Logo/header image support
+- Express charge calculation and display
+- Disclaimer footer
+- Company info from settings.get_company_info()
 """
 
 from pathlib import Path
@@ -32,13 +33,11 @@ from reportlab.pdfgen import canvas
 import models
 import database
 
-# Import settings helper to read config.json if available
 try:
     import settings as settings_module
 except Exception:
     settings_module = None
 
-# Default company info (fallback)
 DEFAULT_COMPANY = {
     "name": "NII ET AL Laundry",
     "address": "123 Laundry Lane\nCity, Country",
@@ -49,6 +48,19 @@ DEFAULT_COMPANY = {
 
 INVOICE_DIR = Path("invoices")
 INVOICE_DIR.mkdir(parents=True, exist_ok=True)
+
+DISCLAIMER_TEXT = """
+PICK UP & DELIVERY SERVICE ALSO AVAILABLE
+
+CAUTION: CUSTOMER SHOULD PLEASE TAKE NOTE
+(1) - Allowable laundry pick up time is a minimum of three (3) days and maximum of a week from date of delivery by customer, any exception will attract an extra fee (5GHS) Per every week of delay in pick up (unless communicated or notified)
+(2) - The company will not be responsible for any item left in our care for more than two weeks, if it gets misplaced
+(3) - Management will not be responsible for the loss of items (e.g. money) left in the customers pocket
+(4) - If any item has been lost or damaged by our negligence, our compensation is limited to 10 times of laundry charge.
+(5) - No liability can be accepted for damage which is due to manufacture or deterioration by wear and tear exposure
+(6) - Foreign material object left in the customer pockets which causes any form of injury to staff will be surcharge as a liability to the customer
+(7) - For dissatisfaction of service of any kind, kindly make a formal complain. Your feedback is always appreciated.
+"""
 
 
 def _fmt_money(v: float) -> str:
@@ -82,10 +94,6 @@ def generate_invoice(
     company_info: Optional[Dict[str, str]] = None,
     open_file: bool = True,
 ) -> str:
-    """
-    Generate invoice PDF. If company_info is None, read settings via settings.get_company_info() if available.
-    """
-    # Prefer provided company_info; else read from settings module; else fallback to DEFAULT_COMPANY
     if company_info is None and settings_module is not None:
         try:
             company_info = settings_module.get_company_info()
@@ -93,16 +101,15 @@ def generate_invoice(
             company_info = DEFAULT_COMPANY.copy()
     company = company_info or DEFAULT_COMPANY.copy()
 
-    # Fetch order snapshot
     snapshot = models.get_order_with_items(order_id)
     order = snapshot["order"]
     customer = snapshot.get("customer") or {}
     items = snapshot.get("items") or []
     payments = snapshot.get("payments") or []
 
-    # Force totals to be current
     totals = models.compute_order_totals(order_id)
     subtotal = totals["subtotal"]
+    express_charge = totals.get("express_charge", 0.0)
     discount_amount = totals["discount_amount"]
     total_amount = totals["total_amount"]
     paid_amount = totals["paid_amount"]
@@ -117,7 +124,7 @@ def generate_invoice(
         out_path = INVOICE_DIR / f"invoice_{invoice_no}.pdf"
 
     doc = SimpleDocTemplate(str(out_path), pagesize=A4,
-                            rightMargin=15 * mm, leftMargin=15 * mm, topMargin=18 * mm, bottomMargin=18 * mm)
+                            rightMargin=15 * mm, leftMargin=15 * mm, topMargin=18 * mm, bottomMargin=25 * mm)
 
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="InvoiceTitle", fontSize=16, leading=20, alignment=1))
@@ -125,40 +132,44 @@ def generate_invoice(
     styles.add(ParagraphStyle(name="Small", parent=styles["Normal"], fontSize=8, leading=10))
     styles.add(ParagraphStyle(name="MetaLabel", parent=styles["Normal"], fontSize=9, leading=12))
     styles.add(ParagraphStyle(name="MetaValue", parent=styles["Normal"], fontSize=10, leading=12))
+    styles.add(ParagraphStyle(name="Disclaimer", parent=styles["Normal"], fontSize=7, leading=9))
 
     elements = []
 
-    # Header (logo optional)
     logo_path = company.get("logo_path", "") or ""
     logo_width = 40 * mm
     logo_height = 30 * mm
-    img = None
+    
+    company_lines = company.get("address", "").replace("\n", "<br/>")
+    company_contact = f"Phone: {company.get('phone','')}<br/>{company.get('email','')}"
+    
     if logo_path:
         try:
             img_path = Path(logo_path)
             if img_path.exists():
                 img = Image(str(img_path), width=logo_width, height=logo_height)
+                
+                right_text = Paragraph(f"{company.get('name', '')}<br/>{company_lines}<br/>{company_contact}", styles["NormalLeft"])
+                
+                header_table = Table([[img, right_text]], colWidths=[logo_width + 8 * mm, None])
+                header_table.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (0, 0), 0),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 8),
+                ]))
+                elements.append(header_table)
+            else:
+                elements.append(Paragraph(company.get("name", ""), styles["InvoiceTitle"]))
+                elements.append(Paragraph(f"{company_lines}<br/>{company_contact}", styles["NormalLeft"]))
         except Exception:
-            img = None
-
-    company_lines = company.get("address", "").replace("\n", "<br/>")
-    company_contact = f"Phone: {company.get('phone','')}<br/>{company.get('email','')}"
-    left = []
-    if img:
-        left.append(img)
+            elements.append(Paragraph(company.get("name", ""), styles["InvoiceTitle"]))
+            elements.append(Paragraph(f"{company_lines}<br/>{company_contact}", styles["NormalLeft"]))
     else:
-        left.append(Paragraph(company.get("name", ""), styles["InvoiceTitle"]))
-    right = Paragraph(f"{company_lines}<br/>{company_contact}", styles["NormalLeft"])
-    header_table = Table([[left, right]], colWidths=[logo_width + 8 * mm, None])
-    header_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (0, 0), 0),
-        ("RIGHTPADDING", (0, 0), (0, 0), 8),
-    ]))
-    elements.append(header_table)
-    elements.append(Spacer(1, 6))
+        elements.append(Paragraph(company.get("name", ""), styles["InvoiceTitle"]))
+        elements.append(Paragraph(f"{company_lines}<br/>{company_contact}", styles["NormalLeft"]))
 
-    # Metadata
+    elements.append(Spacer(1, 12))
+
     meta_data = [
         [Paragraph("<b>Invoice No:</b>", styles["MetaLabel"]), Paragraph(invoice_no, styles["MetaValue"]),
          Paragraph("<b>Order Date:</b>", styles["MetaLabel"]), Paragraph(str(order.get("order_date") or ""), styles["MetaValue"])],
@@ -177,7 +188,6 @@ def generate_invoice(
     elements.append(meta_tbl)
     elements.append(Spacer(1, 8))
 
-    # Items table
     elements.append(Paragraph("<b>Items</b>", styles["NormalLeft"]))
     items_data = _build_order_table_data(items, styles)
     col_widths = [10 * mm, 80 * mm, 28 * mm, 16 * mm, 26 * mm, 26 * mm]
@@ -193,14 +203,22 @@ def generate_invoice(
     elements.append(items_tbl)
     elements.append(Spacer(1, 12))
 
-    # Totals block
     totals_data = [
         [Paragraph("Subtotal:", styles["MetaLabel"]), Paragraph(_fmt_money(subtotal), styles["MetaValue"])],
+    ]
+    
+    if express_charge > 0:
+        totals_data.append(
+            [Paragraph("Express Charge:", styles["MetaLabel"]), Paragraph(_fmt_money(express_charge), styles["MetaValue"])]
+        )
+    
+    totals_data.extend([
         [Paragraph("Discount:", styles["MetaLabel"]), Paragraph(_fmt_money(discount_amount), styles["MetaValue"])],
         [Paragraph("<b>Total:</b>", styles["MetaLabel"]), Paragraph(f"<b>{_fmt_money(total_amount)}</b>", styles["MetaValue"])],
         [Paragraph("Paid:", styles["MetaLabel"]), Paragraph(_fmt_money(paid_amount), styles["MetaValue"])],
         [Paragraph("Balance:", styles["MetaLabel"]), Paragraph(_fmt_money(balance), styles["MetaValue"])],
-    ]
+    ])
+    
     tot_tbl = Table(totals_data, colWidths=[110 * mm, 36 * mm], hAlign="RIGHT")
     tot_tbl.setStyle(TableStyle([
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
@@ -210,7 +228,6 @@ def generate_invoice(
     elements.append(tot_tbl)
     elements.append(Spacer(1, 12))
 
-    # Payments history
     elements.append(Paragraph("<b>Payments</b>", styles["NormalLeft"]))
     if payments:
         pay_rows = [["Date", "Amount", "Notes"]]
@@ -232,10 +249,15 @@ def generate_invoice(
     else:
         elements.append(Paragraph("No payments recorded.", styles["NormalLeft"]))
 
-    elements.append(Spacer(1, 16))
+    elements.append(Spacer(1, 12))
+    
     if order.get("special_instructions"):
         elements.append(Paragraph(f"<b>Special Instructions:</b> {order.get('special_instructions')}", styles["NormalLeft"]))
         elements.append(Spacer(1, 8))
+
+    elements.append(Spacer(1, 12))
+    disclaimer_para = DISCLAIMER_TEXT.replace("\n", "<br/>")
+    elements.append(Paragraph(disclaimer_para, styles["Disclaimer"]))
 
     elements.append(Paragraph(company.get("footer_note", ""), styles["Small"]))
 

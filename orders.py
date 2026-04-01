@@ -158,7 +158,7 @@ class OrdersWindow(QWidget):
         self.create_order_btn.setFont(font_input)
         self.create_order_btn.clicked.connect(self.create_order)
         self.create_order_btn.setCursor(Qt.PointingHandCursor)
-        self.create_order_btn.setProperty("accent", True)  # Accent button
+        self.create_order_btn.setProperty("accent", True)
         left_col.addWidget(self.create_order_btn)
 
         self.order_info_label = QLabel("")
@@ -355,7 +355,7 @@ class OrdersWindow(QWidget):
         finalize_btn = QPushButton("Finalize Order")
         finalize_btn.clicked.connect(self.finalize_order_clicked)
         finalize_btn.setCursor(Qt.PointingHandCursor)
-        finalize_btn.setProperty("accent", True)  # Accent button
+        finalize_btn.setProperty("accent", True)
         totals_layout.addRow("", finalize_btn)
 
         print_btn = QPushButton("Print Invoice")
@@ -367,7 +367,6 @@ class OrdersWindow(QWidget):
         right_col.addWidget(totals_box)
         right_col.addStretch(1)
 
-        # Wrap columns in scroll areas
         left_scroll = _make_scrollable(left_container)
         left_scroll.setMinimumWidth(200)
         middle_scroll = _make_scrollable(middle_container)
@@ -382,8 +381,6 @@ class OrdersWindow(QWidget):
 
         self._set_items_enabled(False)
         self.express_checkbox.setEnabled(False)
-
-    # ... (rest of the methods remain exactly the same as before) ...
 
     def _set_items_enabled(self, enabled: bool):
         self.item_combo.setEnabled(enabled)
@@ -585,9 +582,19 @@ class OrdersWindow(QWidget):
                 self.express_amount = 0.0
                 return
             self.express_active = True
+            conn = database.connect_db()
+            cur = conn.cursor()
+            cur.execute("UPDATE orders SET express_charge = 1 WHERE order_id = ?", (self.order_id,))
+            conn.commit()
+            conn.close()
         else:
             self.express_active = False
             self.express_amount = 0.0
+            conn = database.connect_db()
+            cur = conn.cursor()
+            cur.execute("UPDATE orders SET express_charge = 0 WHERE order_id = ?", (self.order_id,))
+            conn.commit()
+            conn.close()
         
         self.update_totals_with_express()
 
@@ -786,6 +793,16 @@ class OrdersWindow(QWidget):
             return
         self.order_snapshot = snap
         
+        order = snap["order"]
+        express_enabled = order.get("express_charge", False)
+        self.express_checkbox.setChecked(express_enabled)
+        if express_enabled:
+            self.express_active = True
+            self.express_amount = self.calculate_express_surcharge()
+        else:
+            self.express_active = False
+            self.express_amount = 0.0
+        
         items: List[Dict[str, Any]] = snap["items"]
         self.items_table.setRowCount(len(items))
         
@@ -802,7 +819,6 @@ class OrdersWindow(QWidget):
 
         self.update_totals_with_express()
 
-        order = snap["order"]
         if order:
             disc = float(order.get("discount") or 0.0)
             dtype = order.get("discount_type") or "fixed"

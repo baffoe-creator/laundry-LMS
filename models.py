@@ -196,20 +196,19 @@ def remove_order_item(order_id: int, item_id: int) -> bool:
 def compute_order_totals(order_id: int) -> Dict[str, float]:
     """
     Recalculate totals for the order and update orders table.
+    Includes express charge calculation based on quantity.
     Also updates customer ledger with charge entry when total changes.
     (Feature 1d - ledger hook)
     """
     conn = database.connect_db()
     cur = conn.cursor()
 
-    # Sum item subtotals
     cur.execute("SELECT COALESCE(SUM(subtotal), 0) AS subtotal FROM order_items WHERE order_id = ?", (order_id,))
     subtotal_row = cur.fetchone()
     subtotal = float(subtotal_row["subtotal"]) if subtotal_row else 0.0
     subtotal = _round_money(subtotal)
 
-    # Get discount and paid_amount from orders
-    cur.execute("SELECT customer_id, discount, discount_type, paid_amount FROM orders WHERE order_id = ?", (order_id,))
+    cur.execute("SELECT customer_id, discount, discount_type, paid_amount, express_charge FROM orders WHERE order_id = ?", (order_id,))
     order_row = cur.fetchone()
     if not order_row:
         conn.close()
@@ -219,43 +218,55 @@ def compute_order_totals(order_id: int) -> Dict[str, float]:
     discount = float(order_row["discount"] or 0.0)
     discount_type = order_row["discount_type"] or "fixed"
     paid_amount = float(order_row["paid_amount"] or 0.0)
+    express_charge_enabled = order_row["express_charge"] or False
 
-    # Calculate discount amount
     if discount_type == "percent":
         discount_amount = subtotal * (discount / 100.0)
     else:
         discount_amount = discount
 
     discount_amount = _round_money(discount_amount)
-    total_amount = _round_money(max(0.0, subtotal - discount_amount))
+
+    express_charge_amount = 0.0
+    if express_charge_enabled:
+        cur.execute("SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM order_items WHERE order_id = ?", (order_id,))
+        qty_row = cur.fetchone()
+        total_qty = int(qty_row["total_qty"]) if qty_row else 0
+
+        if total_qty <= 3:
+            express_charge_amount = subtotal
+        elif total_qty <= 5:
+            express_charge_amount = 15.0
+        elif total_qty <= 10:
+            express_charge_amount = 25.0
+        else:
+            express_charge_amount = 30.0
+
+    express_charge_amount = _round_money(express_charge_amount)
+    
+    total_amount = _round_money(max(0.0, subtotal + express_charge_amount - discount_amount))
     balance = _round_money(max(0.0, total_amount - paid_amount))
 
-    # Get previous total to detect changes
     cur.execute("SELECT total_amount FROM orders WHERE order_id = ?", (order_id,))
     prev_total = float(cur.fetchone()["total_amount"] or 0.0)
 
-    # Store updated totals in orders table
     cur.execute(
         "UPDATE orders SET total_amount = ?, balance = ? WHERE order_id = ?",
         (total_amount, balance, order_id),
     )
     
-    # If total_amount changed, update ledger (delete old charge, insert new)
     if abs(total_amount - prev_total) > 0.001:
-        # Delete any existing charge for this order
         cur.execute(
             "DELETE FROM customer_ledger WHERE order_id = ? AND entry_type = 'charge'",
             (order_id,)
         )
         
-        # Get current running balance before this order
         cur.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
             (customer_id,)
         )
         running_before = float(cur.fetchone()[0])
         
-        # Insert new charge entry
         cur.execute(
             """
             INSERT INTO customer_ledger 
@@ -270,6 +281,7 @@ def compute_order_totals(order_id: int) -> Dict[str, float]:
 
     return {
         "subtotal": subtotal,
+        "express_charge": express_charge_amount,
         "discount_amount": discount_amount,
         "total_amount": total_amount,
         "paid_amount": paid_amount,
@@ -292,7 +304,6 @@ def record_payment(order_id: int, amount: float, notes: Optional[str] = None) ->
     conn = database.connect_db()
     cur = conn.cursor()
 
-    # Get customer_id and current totals
     cur.execute(
         "SELECT customer_id, paid_amount, total_amount FROM orders WHERE order_id = ?",
         (order_id,)
@@ -306,14 +317,12 @@ def record_payment(order_id: int, amount: float, notes: Optional[str] = None) ->
     current_paid = float(order_row["paid_amount"])
     total_amount = float(order_row["total_amount"])
 
-    # Insert payment row
     cur.execute(
         "INSERT INTO payments (order_id, amount, notes) VALUES (?, ?, ?)",
         (order_id, float(amount), notes),
     )
     payment_id = cur.lastrowid
 
-    # Update paid_amount and balance
     new_paid = current_paid + float(amount)
     new_balance = _round_money(max(0.0, total_amount - new_paid))
 
@@ -322,14 +331,12 @@ def record_payment(order_id: int, amount: float, notes: Optional[str] = None) ->
         (new_paid, new_balance, order_id),
     )
 
-    # Get current running balance before this payment
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
     )
     running_before = float(cur.fetchone()[0])
 
-    # Add payment entry to ledger (negative amount)
     cur.execute(
         """
         INSERT INTO customer_ledger 
@@ -394,7 +401,6 @@ def post_ledger_charge(customer_id: int, order_id: int, amount: float, notes: st
     conn = database.connect_db()
     cur = conn.cursor()
     
-    # Get current running balance
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
@@ -422,7 +428,6 @@ def post_ledger_payment(customer_id: int, order_id: int, amount: float, notes: s
     conn = database.connect_db()
     cur = conn.cursor()
     
-    # Get current running balance
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
@@ -454,7 +459,6 @@ def post_ledger_adjustment(customer_id: int, amount: float, notes: str, order_id
     conn = database.connect_db()
     cur = conn.cursor()
     
-    # Get current running balance
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
@@ -575,7 +579,6 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
     conn = database.connect_db()
     cur = conn.cursor()
     
-    # Overall summary
     cur.execute(
         """
         SELECT
@@ -590,7 +593,6 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
     )
     summary = cur.fetchone()
     
-    # Orders by status breakdown
     cur.execute(
         """
         SELECT status, COUNT(*) as count
@@ -604,7 +606,6 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
     status_rows = cur.fetchall()
     orders_by_status = {r["status"]: r["count"] for r in status_rows}
     
-    # Daily breakdown
     cur.execute(
         """
         SELECT 
@@ -743,9 +744,6 @@ def format_invoice_number(order_id: int, order_date: Optional[str] = None) -> st
     return f"ORD-{date_part}-{int(order_id):06d}"
 
 
-# ---------------------
-# Quick test harness
-# ---------------------
 if __name__ == "__main__":
     import os
     from pprint import pprint

@@ -104,7 +104,7 @@ def add_customer_type_column(conn: sqlite3.Connection) -> None:
         pass
 
 
-def init_db(db_path: Optional[str] = None, force: bool = False) -> None:
+def init_db(db_path: Optional[str] = None, force: bool = True) -> None:
     """
     Initialize the database with tables. If force=True and the DB exists,
     it will be overwritten (use with care).
@@ -145,6 +145,7 @@ def init_db(db_path: Optional[str] = None, force: bool = False) -> None:
             status                TEXT NOT NULL DEFAULT 'Received',
             discount              REAL DEFAULT 0,
             discount_type         TEXT DEFAULT 'fixed',
+            express_charge        BOOLEAN DEFAULT FALSE,
             total_amount          REAL DEFAULT 0,
             paid_amount           REAL DEFAULT 0,
             balance               REAL DEFAULT 0,
