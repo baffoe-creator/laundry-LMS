@@ -4,10 +4,6 @@ customers.py
 
 Customers UI widget for LMS.
 
-Updated with:
-- Order history panel showing customer's orders (Change 1)
-- Customer type field in create form (Change 2e)
-- Outstanding balance summary line (Feature 1f)
 """
 from typing import Optional, Dict, Any, List
 from PyQt5.QtWidgets import (

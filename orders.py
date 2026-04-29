@@ -3,8 +3,6 @@
 orders.py
 
 PyQt5-based Order creation UI for the Laundry Management System (LMS).
-
- 
 """
 
 from typing import Optional, Dict, Any, List, Tuple
@@ -49,7 +47,6 @@ def fmt_money(v: float) -> str:
 
 
 def _make_scrollable(widget: QWidget) -> QScrollArea:
-    """Wrap a widget in a vertically-scrollable, horizontally-fixed scroll area."""
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -91,7 +88,6 @@ class OrdersWindow(QWidget):
         main_layout = QHBoxLayout()
         main_layout.setSpacing(8)
 
-        # ---------- Left: Customer selection ----------
         left_container = QWidget()
         left_col = QVBoxLayout(left_container)
         left_col.setContentsMargins(0, 0, 0, 0)
@@ -124,11 +120,11 @@ class OrdersWindow(QWidget):
         self.new_phone = QLineEdit()
         self.new_name.setFont(font_input)
         self.new_phone.setFont(font_input)
-        
+
         self.new_customer_type = QComboBox()
         self.new_customer_type.addItems(["individual", "corporate", "loyal", "first_time", "student"])
         self.new_customer_type.setCurrentText("individual")
-        
+
         create_form.addRow("Name", self.new_name)
         create_form.addRow("Phone", self.new_phone)
         create_form.addRow("Type", self.new_customer_type)
@@ -167,7 +163,6 @@ class OrdersWindow(QWidget):
 
         left_col.addStretch(1)
 
-        # ---------- Middle: Items table and add item form ----------
         middle_container = QWidget()
         middle_col = QVBoxLayout(middle_container)
         middle_col.setContentsMargins(0, 0, 0, 0)
@@ -188,44 +183,44 @@ class OrdersWindow(QWidget):
         items_layout.addWidget(self.items_table)
 
         add_form = QFormLayout()
-        
+
         self.item_combo = QComboBox()
         self.item_combo.setEditable(True)
         self.item_combo.setFont(font_input)
         self.populate_item_combo()
         self.item_combo.currentTextChanged.connect(self.on_item_selected)
         add_form.addRow("Item:", self.item_combo)
-        
+
         service_layout = QVBoxLayout()
         service_label = QLabel("Select Services (you can select multiple):")
         service_label.setFont(QFont("Segoe UI", 9, QFont.Bold))
         service_layout.addWidget(service_label)
-        
+
         laundry_group = QGroupBox("Laundry Services")
         laundry_layout = QVBoxLayout()
-        
+
         self.chk_laundry_coloured = QCheckBox("Laundry — Coloured")
         self.chk_laundry_white = QCheckBox("Laundry — White")
         self.chk_laundry_coloured.toggled.connect(self.update_service_prices)
         self.chk_laundry_white.toggled.connect(self.update_service_prices)
-        
+
         laundry_layout.addWidget(self.chk_laundry_coloured)
         laundry_layout.addWidget(self.chk_laundry_white)
         laundry_group.setLayout(laundry_layout)
         service_layout.addWidget(laundry_group)
-        
+
         pressing_group = QGroupBox("Pressing / Ironing")
         pressing_layout = QVBoxLayout()
-        
+
         self.chk_pressing = QCheckBox("Pressing / Ironing Only")
         self.chk_pressing.toggled.connect(self.update_service_prices)
-        
+
         pressing_layout.addWidget(self.chk_pressing)
         pressing_group.setLayout(pressing_layout)
         service_layout.addWidget(pressing_group)
-        
+
         add_form.addRow("Services:", service_layout)
-        
+
         price_summary_layout = QHBoxLayout()
         price_summary_layout.addWidget(QLabel("Selected services:"))
         self.price_summary_label = QLabel("None selected")
@@ -233,7 +228,7 @@ class OrdersWindow(QWidget):
         price_summary_layout.addWidget(self.price_summary_label)
         price_summary_layout.addStretch()
         add_form.addRow("", price_summary_layout)
-        
+
         total_price_layout = QHBoxLayout()
         total_price_layout.addWidget(QLabel("Total price for this item:"))
         self.total_price_label = QLabel("GH₵ 0.00")
@@ -242,14 +237,14 @@ class OrdersWindow(QWidget):
         total_price_layout.addWidget(self.total_price_label)
         total_price_layout.addStretch()
         add_form.addRow("", total_price_layout)
-        
+
         self.qty_input = QSpinBox()
         self.qty_input.setMinimum(1)
         self.qty_input.setValue(1)
         self.qty_input.setFont(font_input)
         self.qty_input.valueChanged.connect(self.update_total_price)
         add_form.addRow("Quantity:", self.qty_input)
-        
+
         self.subtotal_preview = QLabel("GH₵ 0.00")
         self.subtotal_preview.setFont(QFont("Segoe UI", 11, QFont.Bold))
         add_form.addRow("Subtotal:", self.subtotal_preview)
@@ -276,7 +271,6 @@ class OrdersWindow(QWidget):
         items_box.setLayout(items_layout)
         middle_col.addWidget(items_box)
 
-        # ---------- Right: Totals, Discount, Actions ----------
         right_container = QWidget()
         right_col = QVBoxLayout(right_container)
         right_col.setContentsMargins(0, 0, 0, 0)
@@ -291,34 +285,32 @@ class OrdersWindow(QWidget):
         self.paid_lbl = QLabel("0.00")
         self.balance_lbl = QLabel("0.00")
 
-        for lbl in (self.subtotal_lbl, self.express_lbl, self.discount_lbl, 
-                   self.total_lbl, self.paid_lbl, self.balance_lbl):
+        for lbl in (self.subtotal_lbl, self.express_lbl, self.discount_lbl,
+                    self.total_lbl, self.paid_lbl, self.balance_lbl):
             lbl.setFont(font_input)
             lbl.setAlignment(Qt.AlignRight)
 
         totals_layout.addRow("Subtotal:", self.subtotal_lbl)
-        
+        totals_layout.addRow("Express Charge:", self.express_lbl)
+        totals_layout.addRow("Discount:", self.discount_lbl)
+        totals_layout.addRow("Total:", self.total_lbl)
+        totals_layout.addRow("Paid:", self.paid_lbl)
+        totals_layout.addRow("Balance:", self.balance_lbl)
+
         express_row = QHBoxLayout()
         self.express_checkbox = QCheckBox("Express Service")
         self.express_checkbox.setFont(font_input)
         self.express_checkbox.toggled.connect(self.on_express_toggled)
         express_row.addWidget(self.express_checkbox)
-        express_row.addWidget(QLabel("Surcharge:"))
-        express_row.addWidget(self.express_lbl)
         express_row.addStretch()
         totals_layout.addRow("", express_row)
-        
-        totals_layout.addRow("Discount:", self.discount_lbl)
-        totals_layout.addRow("Total:", self.total_lbl)
-        totals_layout.addRow("Paid:", self.paid_lbl)
-        totals_layout.addRow("Balance:", self.balance_lbl)
 
         discount_suggest_box = QGroupBox("Suggested Discount")
         ds_layout = QVBoxLayout()
         self.discount_suggest_label = QLabel("No discount applicable")
         self.discount_suggest_label.setWordWrap(True)
         ds_layout.addWidget(self.discount_suggest_label)
-        
+
         self.apply_discount_btn = QPushButton("Apply Suggested Discount")
         self.apply_discount_btn.clicked.connect(self.apply_suggested_discount)
         self.apply_discount_btn.setCursor(Qt.PointingHandCursor)
@@ -396,7 +388,6 @@ class OrdersWindow(QWidget):
         self.selected_customer_label.setText(
             f"Selected: {r['customer_id']} - {r['name']} ({r.get('phone') or ''}) [{cust_type}]"
         )
-        
         if self.order_id:
             self.update_discount_suggestion()
 
@@ -408,31 +399,25 @@ class OrdersWindow(QWidget):
     def on_item_selected(self, item_name: str):
         if not item_name:
             return
-        
         selected_item = None
         for item in self.price_catalogue:
             if item['item_name'] == item_name:
                 selected_item = item
                 break
-        
         if not selected_item:
             return
-        
         self.chk_laundry_coloured.setEnabled(selected_item['price_coloured'] is not None)
         self.chk_laundry_white.setEnabled(selected_item['price_white'] is not None)
         self.chk_pressing.setEnabled(selected_item['price_pressing'] is not None)
-        
         self.chk_laundry_coloured.setToolTip("" if selected_item['price_coloured'] is not None else "Not available for this item")
         self.chk_laundry_white.setToolTip("" if selected_item['price_white'] is not None else "Not available for this item")
         self.chk_pressing.setToolTip("" if selected_item['price_pressing'] is not None else "Not available for this item")
-        
         if not self.chk_laundry_coloured.isEnabled():
             self.chk_laundry_coloured.setChecked(False)
         if not self.chk_laundry_white.isEnabled():
             self.chk_laundry_white.setChecked(False)
         if not self.chk_pressing.isEnabled():
             self.chk_pressing.setChecked(False)
-        
         self.update_service_prices()
 
     def update_service_prices(self):
@@ -441,39 +426,31 @@ class OrdersWindow(QWidget):
             self.total_price_label.setText("GH₵ 0.00")
             self.update_total_price()
             return
-        
         item_name = self.item_combo.currentText()
         selected_item = None
         for item in self.price_catalogue:
             if item['item_name'] == item_name:
                 selected_item = item
                 break
-        
         if not selected_item:
             return
-        
         total_price = 0.0
         selected_services = []
-        
         if self.chk_laundry_coloured.isChecked() and selected_item['price_coloured'] is not None:
             total_price += selected_item['price_coloured']
             selected_services.append("Coloured")
-        
         if self.chk_laundry_white.isChecked() and selected_item['price_white'] is not None:
             total_price += selected_item['price_white']
             selected_services.append("White")
-        
         if self.chk_pressing.isChecked() and selected_item['price_pressing'] is not None:
             total_price += selected_item['price_pressing']
             selected_services.append("Pressing")
-        
         if selected_services:
             self.price_summary_label.setText(" + ".join(selected_services))
             self.total_price_label.setText(f"GH₵ {total_price:.2f}")
         else:
             self.price_summary_label.setText("None selected")
             self.total_price_label.setText("GH₵ 0.00")
-        
         self.update_total_price()
 
     def update_total_price(self):
@@ -483,135 +460,123 @@ class OrdersWindow(QWidget):
             qty = self.qty_input.value()
             subtotal = unit_price * qty
             self.subtotal_preview.setText(f"GH₵ {subtotal:.2f}")
-        except:
+        except Exception:
             self.subtotal_preview.setText("GH₵ 0.00")
 
     def get_service_description(self) -> Tuple[str, float]:
         if not self.item_combo.currentText():
             return ("", 0.0)
-        
         item_name = self.item_combo.currentText()
         selected_item = None
         for item in self.price_catalogue:
             if item['item_name'] == item_name:
                 selected_item = item
                 break
-        
         if not selected_item:
             return ("", 0.0)
-        
         services = []
         total_price = 0.0
-        
         if self.chk_laundry_coloured.isChecked() and selected_item['price_coloured'] is not None:
             services.append("Coloured")
             total_price += selected_item['price_coloured']
-        
         if self.chk_laundry_white.isChecked() and selected_item['price_white'] is not None:
             services.append("White")
             total_price += selected_item['price_white']
-        
         if self.chk_pressing.isChecked() and selected_item['price_pressing'] is not None:
             services.append("Pressing")
             total_price += selected_item['price_pressing']
-        
         if not services:
             return ("", 0.0)
-        
         service_str = " + ".join(services)
         description = f"{item_name} ({service_str})"
-        
         return (description, total_price)
 
     def calculate_express_surcharge(self) -> float:
         if not self.order_id:
             return 0.0
-        
+
         snap = models.get_order_with_items(self.order_id)
         items = snap['items']
-        item_count = len(items)
-        
-        if item_count == 0:
+
+        total_qty = sum(int(item.get('quantity', 0)) for item in items)
+
+        if total_qty == 0:
             return 0.0
-        elif item_count == 1:
-            return float(items[0]['subtotal'])
-        elif 2 <= item_count <= 3:
+        elif total_qty <= 3:
             return sum(float(item['subtotal']) for item in items)
-        elif 4 <= item_count <= 5:
+        elif total_qty <= 5:
             return 15.00
-        elif 6 <= item_count <= 10:
+        elif total_qty <= 10:
             return 25.00
-        elif item_count >= 11:
-            return 30.00
         else:
-            return 0.00
+            return 30.00
 
     def update_totals_with_express(self):
         if not self.order_id:
             return
-        
+
         totals = models.compute_order_totals(self.order_id)
-        
-        express_amount = self.express_amount if self.express_active else 0.0
+
         subtotal = totals["subtotal"]
+        express_charge = totals["express_charge"]
         discount_amount = totals["discount_amount"]
-        
-        total_before_discount = subtotal + express_amount
-        total_amount = total_before_discount - discount_amount
-        
+        total_amount = totals["total_amount"]
+        paid_amount = totals["paid_amount"]
+        balance = totals["balance"]
+
         self.subtotal_lbl.setText(fmt_money(subtotal).replace("GH₵ ", ""))
-        self.express_lbl.setText(fmt_money(express_amount).replace("GH₵ ", ""))
+        self.express_lbl.setText(fmt_money(express_charge).replace("GH₵ ", ""))
         self.discount_lbl.setText(fmt_money(discount_amount).replace("GH₵ ", ""))
         self.total_lbl.setText(fmt_money(total_amount).replace("GH₵ ", ""))
-        self.paid_lbl.setText(fmt_money(totals["paid_amount"]).replace("GH₵ ", ""))
-        
-        balance = total_amount - totals["paid_amount"]
+        self.paid_lbl.setText(fmt_money(paid_amount).replace("GH₵ ", ""))
         self.balance_lbl.setText(fmt_money(max(0.0, balance)).replace("GH₵ ", ""))
 
     def on_express_toggled(self, checked: bool):
         if not self.order_id:
             self.express_checkbox.setChecked(False)
             return
-        
+
+        conn = database.connect_db()
+        cur = conn.cursor()
+
         if checked:
-            self.express_amount = self.calculate_express_surcharge()
-            if self.express_amount <= 0:
-                QMessageBox.warning(self, "Cannot add express", 
-                                   "Could not calculate express surcharge. Make sure you have added items first.")
+            snap = models.get_order_with_items(self.order_id)
+            items = snap['items']
+            total_qty = sum(int(item.get('quantity', 0)) for item in items)
+
+            if total_qty == 0:
+                QMessageBox.warning(self, "Cannot add express",
+                                    "No items in order. Add items before enabling express service.")
                 self.express_checkbox.setChecked(False)
-                self.express_amount = 0.0
+                conn.close()
                 return
-            self.express_active = True
-            conn = database.connect_db()
-            cur = conn.cursor()
+
             cur.execute("UPDATE orders SET express_charge = 1 WHERE order_id = ?", (self.order_id,))
             conn.commit()
             conn.close()
+
+            self.express_active = True
+            self.express_amount = self.calculate_express_surcharge()
         else:
-            self.express_active = False
-            self.express_amount = 0.0
-            conn = database.connect_db()
-            cur = conn.cursor()
             cur.execute("UPDATE orders SET express_charge = 0 WHERE order_id = ?", (self.order_id,))
             conn.commit()
             conn.close()
-        
+
+            self.express_active = False
+            self.express_amount = 0.0
+
         self.update_totals_with_express()
 
     def calculate_discount_suggestion(self) -> Optional[Dict[str, Any]]:
         if not self.order_id or not hasattr(self, 'selected_customer'):
             return None
-        
         customer = self.selected_customer
         if not customer:
             return None
-        
         customer_type = customer.get('customer_type', 'individual')
-        
         snap = models.get_order_with_items(self.order_id)
         items = snap['items']
         item_count = len(items)
-        
         if customer_type == 'corporate' and item_count > 30:
             return {'percentage': 20, 'description': 'Corporate bulk (20% off)'}
         elif customer_type == 'individual' and item_count > 30:
@@ -624,13 +589,11 @@ class OrdersWindow(QWidget):
             return {'percentage': 10, 'description': 'First-time customer (10% off)'}
         elif customer_type == 'student':
             return {'percentage': 20, 'description': 'Student discount (20% off)'}
-        
         return None
 
     def update_discount_suggestion(self):
         suggestion = self.calculate_discount_suggestion()
         self.discount_suggestion = suggestion
-        
         if suggestion:
             self.discount_suggest_label.setText(
                 f"Suggested: {suggestion['description']}\n"
@@ -644,9 +607,7 @@ class OrdersWindow(QWidget):
     def apply_suggested_discount(self):
         if not self.discount_suggestion or not self.order_id:
             return
-        
         percentage = self.discount_suggestion['percentage']
-        
         conn = database.connect_db()
         cur = conn.cursor()
         cur.execute(
@@ -655,13 +616,10 @@ class OrdersWindow(QWidget):
         )
         conn.commit()
         conn.close()
-        
-        models.compute_order_totals(self.order_id)
         self.refresh_order_snapshot()
-        
         QMessageBox.information(
-            self, 
-            "Discount Applied", 
+            self,
+            "Discount Applied",
             f"Applied {self.discount_suggestion['description']}"
         )
 
@@ -679,7 +637,6 @@ class OrdersWindow(QWidget):
             item = QListWidgetItem(f"{r['customer_id']} - {r['name']} ({r.get('phone') or ''}) [{r.get('customer_type', 'individual')}]")
             item.setData(Qt.UserRole, r)
             self.results_list.addItem(item)
-
         if self.results_list.count() > 0:
             self.results_list.setCurrentRow(0)
             self.on_customer_selected(self.results_list.item(0))
@@ -688,7 +645,6 @@ class OrdersWindow(QWidget):
         name = self.new_name.text().strip()
         phone = self.new_phone.text().strip()
         customer_type = self.new_customer_type.currentText()
-        
         if not name:
             QMessageBox.warning(self, "Missing name", "Please enter customer name.")
             return
@@ -709,13 +665,11 @@ class OrdersWindow(QWidget):
         special = self.instructions_text.toPlainText().strip() or None
         disc_type = "percent" if self.rb_percent.isChecked() else "fixed"
         disc_value = float(self.discount_value.value() or 0.0)
-
         try:
             created_by = int(self.current_user["user_id"])
         except Exception:
             QMessageBox.critical(self, "User error", "Current user not available.")
             return
-
         oid = models.create_order(
             customer_id=sc["customer_id"],
             created_by=created_by,
@@ -739,47 +693,36 @@ class OrdersWindow(QWidget):
         if not self.order_id:
             QMessageBox.warning(self, "No order", "Create an order before adding items.")
             return
-        
         item_name = self.item_combo.currentText().strip()
         if not item_name:
             QMessageBox.warning(self, "Missing item", "Select an item from the catalogue.")
             return
-        
         description, total_price = self.get_service_description()
         if not description or total_price <= 0:
             QMessageBox.warning(self, "No service selected", "Please select at least one service for this item.")
             return
-        
         qty = int(self.qty_input.value())
-        
         try:
             service_info = self.price_summary_label.text()
             item_id = models.add_order_item(
-                self.order_id, 
+                self.order_id,
                 description,
                 service_info,
-                qty, 
+                qty,
                 total_price
             )
         except Exception as e:
             QMessageBox.critical(self, "Error adding item", str(e))
             return
-
         self.chk_laundry_coloured.setChecked(False)
         self.chk_laundry_white.setChecked(False)
         self.chk_pressing.setChecked(False)
         self.qty_input.setValue(1)
-        
         self.refresh_order_snapshot()
         self.update_discount_suggestion()
-        
-        if self.express_checkbox.isChecked():
-            self.express_amount = self.calculate_express_surcharge()
-            self.update_totals_with_express()
-        
         QMessageBox.information(
-            self, 
-            "Item added", 
+            self,
+            "Item added",
             f"Added {qty} x {description}\nTotal: GH₵ {total_price * qty:.2f}"
         )
 
@@ -792,29 +735,27 @@ class OrdersWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to load order: {e}")
             return
         self.order_snapshot = snap
-        
+
         order = snap["order"]
-        express_enabled = order.get("express_charge", False)
+        express_enabled = bool(order.get("express_charge", False))
+
+        self.express_checkbox.blockSignals(True)
         self.express_checkbox.setChecked(express_enabled)
-        if express_enabled:
-            self.express_active = True
-            self.express_amount = self.calculate_express_surcharge()
-        else:
-            self.express_active = False
-            self.express_amount = 0.0
-        
+        self.express_checkbox.blockSignals(False)
+
+        self.express_active = express_enabled
+        self.express_amount = self.calculate_express_surcharge() if express_enabled else 0.0
+
         items: List[Dict[str, Any]] = snap["items"]
         self.items_table.setRowCount(len(items))
-        
         self.remove_item_combo.clear()
-        
+
         for i, it in enumerate(items):
             self.items_table.setItem(i, 0, QTableWidgetItem(str(it.get("item_id", ""))))
             self.items_table.setItem(i, 1, QTableWidgetItem(str(it.get("item_type"))))
             self.items_table.setItem(i, 2, QTableWidgetItem(str(it.get("quantity"))))
             self.items_table.setItem(i, 3, QTableWidgetItem(fmt_money(float(it.get("unit_price") or 0.0)).replace("GH₵ ", "")))
             self.items_table.setItem(i, 4, QTableWidgetItem(fmt_money(float(it.get("subtotal") or 0.0)).replace("GH₵ ", "")))
-            
             self.remove_item_combo.addItem(f"{it.get('item_type')} (ID: {it.get('item_id')})", it.get('item_id'))
 
         self.update_totals_with_express()
@@ -831,27 +772,32 @@ class OrdersWindow(QWidget):
     def remove_selected_item(self):
         if not self.order_id or self.remove_item_combo.count() == 0:
             return
-        
         item_id = self.remove_item_combo.currentData()
         if not item_id:
             return
-        
         confirm = QMessageBox.question(
-            self, "Confirm Remove", 
-            f"Are you sure you want to remove this item?",
+            self, "Confirm Remove",
+            "Are you sure you want to remove this item?",
             QMessageBox.Yes | QMessageBox.No
         )
-        
         if confirm == QMessageBox.Yes:
             try:
                 models.remove_order_item(self.order_id, item_id)
                 self.refresh_order_snapshot()
                 self.update_discount_suggestion()
-                
+
                 if self.express_checkbox.isChecked():
-                    self.express_amount = self.calculate_express_surcharge()
-                    if self.express_amount <= 0:
+                    snap = models.get_order_with_items(self.order_id)
+                    total_qty = sum(int(it.get('quantity', 0)) for it in snap['items'])
+                    if total_qty == 0:
+                        conn = database.connect_db()
+                        cur = conn.cursor()
+                        cur.execute("UPDATE orders SET express_charge = 0 WHERE order_id = ?", (self.order_id,))
+                        conn.commit()
+                        conn.close()
+                        self.express_checkbox.blockSignals(True)
                         self.express_checkbox.setChecked(False)
+                        self.express_checkbox.blockSignals(False)
                         self.express_active = False
                         self.express_amount = 0.0
                     self.update_totals_with_express()
@@ -893,13 +839,11 @@ class OrdersWindow(QWidget):
         except ImportError:
             QMessageBox.information(self, "Invoice not available", "Invoice module not found. Please ensure invoice.py exists.")
             return
-
         try:
             outfile = invoice.generate_invoice(self.order_id, open_file=False)
         except Exception as e:
             QMessageBox.critical(self, "Invoice error", f"Failed to generate invoice: {e}")
             return
-
         dlg = QMessageBox(self)
         dlg.setWindowTitle("Invoice Generated")
         dlg.setText(f"Invoice saved to:\n{outfile}\n\nWould you like to open the file or send it to the printer?")
@@ -907,7 +851,6 @@ class OrdersWindow(QWidget):
         print_btn = dlg.addButton("Print", QMessageBox.ActionRole)
         close_btn = dlg.addButton("Close", QMessageBox.RejectRole)
         dlg.exec_()
-
         clicked = dlg.clickedButton()
         if clicked == open_btn:
             try:

@@ -2,13 +2,7 @@
 """
 dashboard.py — robust mapping of sidebar labels to QStackedWidget pages.
 
-Updated with:
-- Header bar with logo and user info
-- Sidebar object name for QSS styling
-- Pointer cursors on buttons
-- Smarter scrollable layout - only scroll when needed
-- Increased minimum size for better visibility
-- Fixed toolbar icons - distinct icons for Settings and Pricing
+ 
 """
 
 from PyQt5.QtWidgets import (

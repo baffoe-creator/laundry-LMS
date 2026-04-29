@@ -8,12 +8,6 @@ Updated Reports UI with export/print capabilities:
 - Period Report (date range) with summary and details
 - Export period orders to CSV
 - Print period report PDF with summary and details
-
-Fixes/Updates:
-- Fixed PDF formatting to match invoice style
-- Fixed GH₵ symbol display using DejaVuSans font
-- Fixed company header to properly load from config.json
-- Improved layout to reduce excessive scrolling
 """
 
 from typing import Optional, Dict, Any, List
@@ -47,9 +41,8 @@ from PyQt5.QtCore import Qt, QDate
 import models
 import database
 
-# reportlab imports for PDF export
 try:
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
@@ -58,7 +51,6 @@ try:
     from reportlab.pdfbase.ttfonts import TTFont
     REPORTLAB_AVAILABLE = True
     
-    # Register DejaVuSans for GH₵ symbol support
     font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     if os.path.exists(font_path):
         pdfmetrics.registerFont(TTFont('DejaVuSans', font_path))
@@ -66,21 +58,18 @@ try:
         FONT_NAME = 'DejaVuSans'
         FONT_BOLD = 'DejaVuSans-Bold'
     else:
-        # Fallback to Helvetica if DejaVu not available
         FONT_NAME = 'Helvetica'
         FONT_BOLD = 'Helvetica-Bold'
-        print("Warning: DejaVuSans not found, using Helvetica (GH₵ may not display correctly)")
+        print("Warning: DejaVuSans not found, using Helvetica")
         
 except Exception as e:
     print(f"ReportLab import error: {e}")
     REPORTLAB_AVAILABLE = False
 
 def fmt_money(v: float) -> str:
-    """Format money with GH₵ symbol - using unicode character directly"""
     return f"GH₵ {v:,.2f}"
 
 def fmt_money_pdf(v: float) -> str:
-    """Format money for PDF with proper symbol handling"""
     try:
         if FONT_NAME == 'DejaVuSans':
             return f"₵ {v:,.2f}"
@@ -90,11 +79,9 @@ def fmt_money_pdf(v: float) -> str:
         return f"GHS {v:,.2f}"
 
 def load_company_info() -> Dict[str, str]:
-    """Load company info from config.json for PDF headers."""
     try:
         with open("config.json", "r", encoding='utf-8') as f:
             data = json.load(f)
-            # Handle nested company structure
             if "company" in data:
                 return data["company"]
             return data
@@ -108,7 +95,6 @@ def load_company_info() -> Dict[str, str]:
 
 
 def export_daily_orders_csv(date_str: str, output_path: Optional[str] = None) -> str:
-    """Export orders on a given date to CSV."""
     if not output_path:
         output_path = f"report_orders_{date_str}.csv"
     
@@ -136,7 +122,6 @@ def export_daily_orders_csv(date_str: str, output_path: Optional[str] = None) ->
 
 
 def export_range_orders_csv(date_from: str, date_to: str, output_path: Optional[str] = None) -> str:
-    """Export all orders in [date_from, date_to] to CSV."""
     if not output_path:
         output_path = f"report_orders_{date_from}_to_{date_to}.csv"
     
@@ -161,9 +146,6 @@ def export_range_orders_csv(date_from: str, date_to: str, output_path: Optional[
 
 
 def print_daily_report_pdf(date_str: str, output_path: Optional[str] = None, open_file: bool = True) -> str:
-    """
-    Generate a printable PDF for the daily report matching invoice style.
-    """
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError("reportlab is required for PDF generation. Install via 'pip install reportlab'")
 
@@ -178,16 +160,14 @@ def print_daily_report_pdf(date_str: str, output_path: Optional[str] = None, ope
                            topMargin=18*mm, bottomMargin=18*mm)
     styles = getSampleStyleSheet()
     
-    # Use registered font if available
     font_name = FONT_NAME if 'FONT_NAME' in globals() else 'Helvetica'
     font_bold = FONT_BOLD if 'FONT_BOLD' in globals() else 'Helvetica-Bold'
     
-    # Custom styles matching invoice
     styles.add(ParagraphStyle(name="CompanyName", 
                               parent=styles["Normal"],
                               fontName=font_bold,
                               fontSize=14,
-                              alignment=1,  # Center
+                              alignment=1,
                               spaceAfter=4))
     
     styles.add(ParagraphStyle(name="CompanyDetails",
@@ -213,7 +193,6 @@ def print_daily_report_pdf(date_str: str, output_path: Optional[str] = None, ope
     
     elements = []
     
-    # Company Header (matching invoice style)
     elements.append(Paragraph(company.get("name", "LMS"), styles["CompanyName"]))
     if company.get("address"):
         elements.append(Paragraph(company["address"], styles["CompanyDetails"]))
@@ -221,11 +200,9 @@ def print_daily_report_pdf(date_str: str, output_path: Optional[str] = None, ope
         elements.append(Paragraph(f"Tel: {company.get('phone', '')}  Email: {company.get('email', '')}", styles["CompanyDetails"]))
     elements.append(Spacer(1, 8))
     
-    # Report Title
     elements.append(Paragraph(f"Daily Sales Report — {date_str}", styles["ReportTitle"]))
     elements.append(Spacer(1, 8))
 
-    # Summary in a table for better formatting
     summary_data = [
         ["Total Orders:", str(summary['total_orders']), "", ""],
         ["Total Sales:", fmt_money_pdf(summary['total_sales']), "Total Paid:", fmt_money_pdf(summary['total_paid'])],
@@ -244,7 +221,6 @@ def print_daily_report_pdf(date_str: str, output_path: Optional[str] = None, ope
     elements.append(summary_table)
     elements.append(Spacer(1, 12))
 
-    # Orders table
     elements.append(Paragraph("Order Details", styles["SectionHeader"]))
     elements.append(Spacer(1, 4))
     
@@ -292,9 +268,6 @@ def print_daily_report_pdf(date_str: str, output_path: Optional[str] = None, ope
 
 def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[str] = None, 
                           open_file: bool = True) -> str:
-    """
-    Generate a PDF covering the date range matching invoice style.
-    """
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError("reportlab is required for PDF generation. Install via 'pip install reportlab'")
 
@@ -309,11 +282,9 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
                            topMargin=18*mm, bottomMargin=18*mm)
     styles = getSampleStyleSheet()
     
-    # Use registered font if available
     font_name = FONT_NAME if 'FONT_NAME' in globals() else 'Helvetica'
     font_bold = FONT_BOLD if 'FONT_BOLD' in globals() else 'Helvetica-Bold'
     
-    # Custom styles matching invoice
     styles.add(ParagraphStyle(name="CompanyName", 
                               parent=styles["Normal"],
                               fontName=font_bold,
@@ -350,7 +321,6 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
     
     elements = []
     
-    # Company Header (matching invoice style)
     elements.append(Paragraph(company.get("name", "LMS"), styles["CompanyName"]))
     if company.get("address"):
         elements.append(Paragraph(company["address"], styles["CompanyDetails"]))
@@ -358,11 +328,9 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
         elements.append(Paragraph(f"Tel: {company.get('phone', '')}  Email: {company.get('email', '')}", styles["CompanyDetails"]))
     elements.append(Spacer(1, 8))
     
-    # Report Title
     elements.append(Paragraph(f"Period Sales Report: {date_from} to {date_to}", styles["ReportTitle"]))
     elements.append(Spacer(1, 12))
 
-    # Summary section
     elements.append(Paragraph("Summary", styles["SectionHeader"]))
     elements.append(Spacer(1, 4))
     
@@ -384,7 +352,6 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
     elements.append(summary_table)
     elements.append(Spacer(1, 12))
 
-    # Orders by Status
     if report_data['orders_by_status']:
         elements.append(Paragraph("Orders by Status", styles["SubHeader"]))
         status_data = [["Status", "Count"]]
@@ -403,7 +370,6 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
         elements.append(status_tbl)
         elements.append(Spacer(1, 8))
 
-    # Daily Breakdown
     if report_data['daily_breakdown']:
         elements.append(Paragraph("Daily Breakdown", styles["SubHeader"]))
         daily_data = [["Date", "Orders", "Sales", "Paid", "Outstanding"]]
@@ -430,7 +396,6 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
     
     elements.append(PageBreak())
     
-    # Detail section - Orders table
     elements.append(Paragraph("Order Details", styles["SectionHeader"]))
     elements.append(Spacer(1, 4))
     
@@ -477,7 +442,6 @@ def print_range_report_pdf(date_from: str, date_to: str, output_path: Optional[s
 
 
 def _make_scrollable(widget: QWidget, min_width: int = 0) -> QScrollArea:
-    """Wrap a widget in a scroll area with smarter sizing."""
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -507,7 +471,6 @@ class ReportsWindow(QWidget):
         main.setSpacing(8)
         main.setContentsMargins(8, 8, 8, 8)
 
-        # Left: Status filters and orders list
         left_container = QWidget()
         left = QVBoxLayout(left_container)
         left.setContentsMargins(0, 0, 0, 0)
@@ -545,7 +508,6 @@ class ReportsWindow(QWidget):
         refresh_btn.setCursor(Qt.PointingHandCursor)
         left.addWidget(refresh_btn)
 
-        # Middle: Selected order details
         middle_container = QWidget()
         middle = QVBoxLayout(middle_container)
         middle.setContentsMargins(0, 0, 0, 0)
@@ -580,14 +542,16 @@ class ReportsWindow(QWidget):
         totals_group = QGroupBox("Totals")
         totals_layout = QFormLayout()
         self.t_subtotal = QLabel("0.00")
+        self.t_express = QLabel("0.00")
         self.t_discount = QLabel("0.00")
         self.t_total = QLabel("0.00")
         self.t_paid = QLabel("0.00")
         self.t_balance = QLabel("0.00")
-        for lbl in (self.t_subtotal, self.t_discount, self.t_total, self.t_paid, self.t_balance):
+        for lbl in (self.t_subtotal, self.t_express, self.t_discount, self.t_total, self.t_paid, self.t_balance):
             lbl.setFont(font)
             lbl.setAlignment(Qt.AlignRight)
         totals_layout.addRow("Subtotal:", self.t_subtotal)
+        totals_layout.addRow("Express Charge:", self.t_express)
         totals_layout.addRow("Discount:", self.t_discount)
         totals_layout.addRow("Total:", self.t_total)
         totals_layout.addRow("Paid:", self.t_paid)
@@ -595,7 +559,6 @@ class ReportsWindow(QWidget):
         totals_group.setLayout(totals_layout)
         middle.addWidget(totals_group)
 
-        # Right: Actions & Reports
         right_container = QWidget()
         right = QVBoxLayout(right_container)
         right.setContentsMargins(0, 0, 0, 0)
@@ -611,7 +574,6 @@ class ReportsWindow(QWidget):
         actions_group.setLayout(act_layout)
         right.addWidget(actions_group)
 
-        # Daily Report group
         daily_group = QGroupBox("Daily Report")
         dg_layout = QFormLayout()
         self.date_edit = QDateEdit()
@@ -647,7 +609,6 @@ class ReportsWindow(QWidget):
         daily_group.setLayout(dg_layout)
         right.addWidget(daily_group)
 
-        # Period Report group
         period_group = QGroupBox("Period Report")
         pg_layout = QFormLayout()
         
@@ -698,7 +659,6 @@ class ReportsWindow(QWidget):
         period_group.setLayout(pg_layout)
         right.addWidget(period_group)
 
-        # Wrap columns that need scrolling
         left_scroll = _make_scrollable(left_container, 200)
         middle_scroll = _make_scrollable(middle_container, 320)
         right_scroll = _make_scrollable(right_container, 250)
@@ -709,7 +669,6 @@ class ReportsWindow(QWidget):
         self.setLayout(main)
 
     def load_orders_by_status(self, status: str):
-        # Update button states
         for btn in self.status_buttons:
             btn.setChecked(btn.text() == status)
         
@@ -778,6 +737,7 @@ class ReportsWindow(QWidget):
 
         totals = models.compute_order_totals(order_id)
         self.t_subtotal.setText(fmt_money(totals["subtotal"]))
+        self.t_express.setText(fmt_money(totals.get("express_charge", 0.0)))
         self.t_discount.setText(fmt_money(totals["discount_amount"]))
         self.t_total.setText(fmt_money(totals["total_amount"]))
         self.t_paid.setText(fmt_money(totals["paid_amount"]))

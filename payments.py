@@ -10,13 +10,8 @@ Features:
 - View selected order details (customer, items, totals, balance)
 - Record a payment (amount + optional notes)
 - View payment history for the selected order
-- Customer Ledger panel showing outstanding balance and recent ledger entries (Feature 1e)
+- Customer Ledger panel showing outstanding balance and recent ledger entries
 - Post Adjustment button for admin/manager roles
-
-Design notes:
-- Amounts are rounded/displayed to 2 decimals.
-- Ledger panel shows running balance with color coding.
-- Adjustments only available to admin/manager.
 """
 
 import sys
@@ -108,11 +103,9 @@ class AdjustmentDialog(QDialog):
 class PaymentsWindow(QWidget):
     def __init__(self, current_user: Optional[Dict[str, Any]] = None):
         super().__init__()
-        # Handle both dict and sqlite3.Row
         if current_user is None:
             current_user = database.get_user_by_username("admin")
         
-        # Convert sqlite3.Row to dict if needed
         if hasattr(current_user, 'keys') and not isinstance(current_user, dict):
             self.current_user = dict(current_user)
         else:
@@ -134,7 +127,6 @@ class PaymentsWindow(QWidget):
 
         main = QHBoxLayout()
 
-        # ---- Left: Recent orders + Search ----
         left_col = QVBoxLayout()
         search_box = QGroupBox("Find Order")
         s_layout = QFormLayout()
@@ -162,7 +154,6 @@ class PaymentsWindow(QWidget):
         left_col.addWidget(refresh_btn)
         left_col.addStretch(1)
 
-        # ---- Middle: Order details and items ----
         middle_col = QVBoxLayout()
         order_info_box = QGroupBox("Order Details")
         oi_layout = QFormLayout()
@@ -194,14 +185,16 @@ class PaymentsWindow(QWidget):
         totals_box = QGroupBox("Totals")
         totals_layout = QFormLayout()
         self.lbl_subtotal = QLabel("0.00")
+        self.lbl_express = QLabel("0.00")
         self.lbl_discount = QLabel("0.00")
         self.lbl_total = QLabel("0.00")
         self.lbl_paid = QLabel("0.00")
         self.lbl_balance = QLabel("0.00")
-        for lbl in (self.lbl_subtotal, self.lbl_discount, self.lbl_total, self.lbl_paid, self.lbl_balance):
+        for lbl in (self.lbl_subtotal, self.lbl_express, self.lbl_discount, self.lbl_total, self.lbl_paid, self.lbl_balance):
             lbl.setFont(font_input)
             lbl.setAlignment(Qt.AlignRight)
         totals_layout.addRow("Subtotal:", self.lbl_subtotal)
+        totals_layout.addRow("Express Charge:", self.lbl_express)
         totals_layout.addRow("Discount:", self.lbl_discount)
         totals_layout.addRow("Total:", self.lbl_total)
         totals_layout.addRow("Paid:", self.lbl_paid)
@@ -209,7 +202,6 @@ class PaymentsWindow(QWidget):
         totals_box.setLayout(totals_layout)
         middle_col.addWidget(totals_box)
 
-        # Payment history table
         history_box = QGroupBox("Payment History")
         hist_layout = QVBoxLayout()
         self.pay_table = QTableWidget()
@@ -222,10 +214,8 @@ class PaymentsWindow(QWidget):
         
         middle_col.addStretch(1)
 
-        # ---- Right: Payment form and Customer Ledger ----
         right_col = QVBoxLayout()
         
-        # Payment form
         pay_box = QGroupBox("Record Payment")
         pay_layout = QFormLayout()
         self.pay_amount = QDoubleSpinBox()
@@ -245,22 +235,18 @@ class PaymentsWindow(QWidget):
         pay_box.setLayout(pay_layout)
         right_col.addWidget(pay_box)
 
-        # Customer Ledger panel (Feature 1e)
         ledger_box = QGroupBox("Customer Ledger — Outstanding Balance")
         ledger_layout = QVBoxLayout()
         
-        # Outstanding balance display
         self.balance_label = QLabel("Total owed: GH₵ 0.00")
         self.balance_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
         ledger_layout.addWidget(self.balance_label)
         
-        # Post Adjustment button (admin/manager only)
         if self.role in ("admin", "manager"):
             self.adjust_btn = QPushButton("Post Adjustment")
             self.adjust_btn.clicked.connect(self.post_adjustment_clicked)
             ledger_layout.addWidget(self.adjust_btn)
         
-        # Ledger entries table
         self.ledger_table = QTableWidget()
         self.ledger_table.setColumnCount(6)
         self.ledger_table.setHorizontalHeaderLabels([
@@ -274,18 +260,14 @@ class PaymentsWindow(QWidget):
         right_col.addWidget(ledger_box)
         right_col.addStretch(1)
 
-        # Place columns in main layout
         main.addLayout(left_col, stretch=2)
         main.addLayout(middle_col, stretch=4)
         main.addLayout(right_col, stretch=3)
         self.setLayout(main)
 
-        # Populate recent orders initially
         self.load_recent_orders()
 
-    # ---- Recent orders loader ----
     def load_recent_orders(self):
-        """Load the most recent 20 orders and show in the recent_list."""
         conn = database.connect_db()
         cur = conn.cursor()
         cur.execute(
@@ -309,7 +291,6 @@ class PaymentsWindow(QWidget):
         order_id = int(data["order_id"])
         self.select_order(order_id)
 
-    # ---- Find order by input ----
     def find_order(self):
         text = self.search_input.text().strip()
         if not text:
@@ -321,9 +302,7 @@ class PaymentsWindow(QWidget):
             return
         self.select_order(oid)
 
-    # ---- Customer Ledger methods (Feature 1e) ----
     def load_customer_ledger(self, customer_id: int, customer_name: str):
-        """Load and display customer ledger entries."""
         try:
             balance = models.get_customer_outstanding_balance(customer_id)
             ledger = models.get_customer_ledger(customer_id, limit=20)
@@ -331,7 +310,6 @@ class PaymentsWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to load ledger: {e}")
             return
         
-        # Update balance label with color coding
         balance_text = f"Total owed by {customer_name}: GH₵ {fmt_money(balance)}"
         self.balance_label.setText(balance_text)
         if balance > 0.01:
@@ -341,47 +319,39 @@ class PaymentsWindow(QWidget):
         else:
             self.balance_label.setStyleSheet("color: black;")
         
-        # Populate ledger table
         self.ledger_table.setRowCount(len(ledger))
         for i, entry in enumerate(ledger):
-            # Date
             date_str = entry.get("entry_date", "")
             if date_str and " " in date_str:
                 date_str = date_str.split(" ")[0]
             self.ledger_table.setItem(i, 0, QTableWidgetItem(date_str))
             
-            # Type with color coding
             entry_type = entry.get("entry_type", "")
             type_item = QTableWidgetItem(entry_type)
             if entry_type == "charge":
-                type_item.setForeground(QColor(255, 0, 0))  # Red
+                type_item.setForeground(QColor(255, 0, 0))
             elif entry_type == "payment":
-                type_item.setForeground(QColor(0, 128, 0))  # Green
+                type_item.setForeground(QColor(0, 128, 0))
             elif entry_type == "adjustment":
-                type_item.setForeground(QColor(255, 165, 0))  # Orange
+                type_item.setForeground(QColor(255, 165, 0))
             self.ledger_table.setItem(i, 1, type_item)
             
-            # Amount
             amount = entry.get("amount", 0)
             amount_item = QTableWidgetItem(fmt_money(abs(amount)))
             if amount > 0:
-                amount_item.setForeground(QColor(255, 0, 0))  # Red for positive (debt)
+                amount_item.setForeground(QColor(255, 0, 0))
             elif amount < 0:
-                amount_item.setForeground(QColor(0, 128, 0))  # Green for negative (payment)
+                amount_item.setForeground(QColor(0, 128, 0))
             self.ledger_table.setItem(i, 2, amount_item)
             
-            # Running balance
             self.ledger_table.setItem(i, 3, QTableWidgetItem(fmt_money(entry.get("running_balance", 0))))
             
-            # Order ID
             order_id = entry.get("order_id", "")
             self.ledger_table.setItem(i, 4, QTableWidgetItem(str(order_id) if order_id else ""))
             
-            # Notes
             self.ledger_table.setItem(i, 5, QTableWidgetItem(entry.get("notes", "")))
 
     def post_adjustment_clicked(self):
-        """Handle Post Adjustment button click."""
         if not self.selected_order_id or not self.order_snapshot:
             QMessageBox.warning(self, "No order", "Select an order first.")
             return
@@ -403,12 +373,10 @@ class PaymentsWindow(QWidget):
             try:
                 models.post_ledger_adjustment(customer_id, amount, notes, self.selected_order_id)
                 QMessageBox.information(self, "Success", "Adjustment posted successfully.")
-                # Refresh ledger display
                 self.load_customer_ledger(customer_id, customer_name)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to post adjustment: {e}")
 
-    # ---- Select and display an order ----
     def select_order(self, order_id: int):
         try:
             snap = models.get_order_with_items(order_id)
@@ -418,7 +386,6 @@ class PaymentsWindow(QWidget):
         self.selected_order_id = order_id
         self.order_snapshot = snap
         
-        # Fill order info
         order = snap["order"]
         customer = snap.get("customer") or {}
         customer_id = customer.get("customer_id")
@@ -430,7 +397,6 @@ class PaymentsWindow(QWidget):
         self.lbl_status.setText(order.get("status") or "-")
         self.lbl_instructions.setText(order.get("special_instructions") or "-")
 
-        # Items table
         items = snap.get("items", [])
         self.items_table.setRowCount(len(items))
         for i, it in enumerate(items):
@@ -440,15 +406,14 @@ class PaymentsWindow(QWidget):
             self.items_table.setItem(i, 3, QTableWidgetItem(fmt_money(float(it.get("unit_price") or 0.0))))
             self.items_table.setItem(i, 4, QTableWidgetItem(fmt_money(float(it.get("subtotal") or 0.0))))
 
-        # Totals
         totals = models.compute_order_totals(order_id)
         self.lbl_subtotal.setText(fmt_money(totals["subtotal"]))
+        self.lbl_express.setText(fmt_money(totals.get("express_charge", 0.0)))
         self.lbl_discount.setText(fmt_money(totals["discount_amount"]))
         self.lbl_total.setText(fmt_money(totals["total_amount"]))
         self.lbl_paid.setText(fmt_money(totals["paid_amount"]))
         self.lbl_balance.setText(fmt_money(totals["balance"]))
 
-        # Payment history
         payments = snap.get("payments", [])
         self.pay_table.setRowCount(len(payments))
         for i, p in enumerate(payments):
@@ -456,11 +421,9 @@ class PaymentsWindow(QWidget):
             self.pay_table.setItem(i, 1, QTableWidgetItem(fmt_money(float(p.get("amount") or 0.0))))
             self.pay_table.setItem(i, 2, QTableWidgetItem(str(p.get("notes") or "")))
 
-        # Load customer ledger if we have customer_id
         if customer_id:
             self.load_customer_ledger(customer_id, customer_name)
 
-    # ---- Record payment handler ----
     def record_payment_clicked(self):
         if not self.selected_order_id:
             QMessageBox.warning(self, "No order", "Select an order to record payment for.")

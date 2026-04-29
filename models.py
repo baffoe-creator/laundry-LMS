@@ -3,30 +3,6 @@
 models.py
 
 Data access layer (DAL) for the Laundry Management System (LMS).
-
-This module provides small, well-documented functions that perform CRUD and
-business logic operations against the SQLite schema created by database.py.
-
-Key responsibilities implemented here:
-- create_user / authenticate_user
-- create_customer / find_customers
-- create_order
-- add_order_item (auto-calc subtotal)
-- compute_order_totals (applies discount_type/fixed/percent and updates order totals)
-- record_payment (inserts payment and updates order paid_amount and balance)
-- get_order_with_items (returns order metadata + items + payments)
-- list_orders_by_status
-- daily_report (summary for a given date)
-- format_invoice_number
-- get_all_prices / update_item_price
-- Customer ledger functions (Feature 1c)
-- Date-range report functions (Feature 2a)
-
-Design notes / decisions:
-- Discount semantics: orders.discount (REAL) + orders.discount_type ('percent'|'fixed')
-- Order numbering: order_id is the integer PK. format_invoice_number() for display.
-- All DB calls use parameterized SQL.
-- Ledger entries are automatically created when orders are finalised and payments recorded.
 """
 
 from typing import Optional, List, Dict, Any, Tuple
@@ -38,16 +14,11 @@ import database
 
 
 def _round_money(value: float) -> float:
-    """Round a float to 2 decimal places using bankers rounding."""
     d = Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return float(d)
 
 
-# ---------------------
-# User functions
-# ---------------------
 def create_user(username: str, password: str, role: str = "cashier") -> int:
-    """Create a user and return the new user_id."""
     password_hash = database.hash_password(password)
     conn = database.connect_db()
     cur = conn.cursor()
@@ -62,7 +33,6 @@ def create_user(username: str, password: str, role: str = "cashier") -> int:
 
 
 def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
-    """Verify provided credentials. Returns user dict on success or None."""
     row = database.get_user_by_username(username)
     if not row:
         return None
@@ -71,15 +41,10 @@ def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-# ---------------------
-# Customer functions
-# ---------------------
 def create_customer(name: str, phone: Optional[str] = None, customer_type: str = "individual") -> int:
-    """Create a customer and return customer_id."""
     valid_types = ["individual", "corporate", "loyal", "first_time", "student"]
     if customer_type not in valid_types:
         customer_type = "individual"
-    
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -93,7 +58,6 @@ def create_customer(name: str, phone: Optional[str] = None, customer_type: str =
 
 
 def find_customers(query: str) -> List[Dict[str, Any]]:
-    """Search customers by name or phone."""
     q = f"%{query.strip()}%"
     conn = database.connect_db()
     cur = conn.cursor()
@@ -107,7 +71,6 @@ def find_customers(query: str) -> List[Dict[str, Any]]:
 
 
 def get_customer_by_id(customer_id: int) -> Optional[Dict[str, Any]]:
-    """Fetch a single customer by ID."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute("SELECT * FROM customers WHERE customer_id = ?", (customer_id,))
@@ -116,9 +79,6 @@ def get_customer_by_id(customer_id: int) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-# ---------------------
-# Order and Item functions
-# ---------------------
 def create_order(
     customer_id: int,
     created_by: int,
@@ -127,10 +87,8 @@ def create_order(
     discount: float = 0.0,
     discount_type: str = "fixed",
 ) -> int:
-    """Create an order record and return order_id."""
     if discount_type not in ("fixed", "percent"):
         raise ValueError("discount_type must be 'fixed' or 'percent'")
-
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -154,7 +112,6 @@ def add_order_item(
     quantity: int,
     unit_price: float,
 ) -> int:
-    """Add an item to an order and recompute totals."""
     if quantity <= 0:
         raise ValueError("quantity must be >= 1")
     if unit_price < 0:
@@ -180,26 +137,31 @@ def add_order_item(
 
 
 def remove_order_item(order_id: int, item_id: int) -> bool:
-    """Remove an item from an order."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute("DELETE FROM order_items WHERE item_id = ? AND order_id = ?", (item_id, order_id))
     success = cur.rowcount > 0
     conn.commit()
     conn.close()
-    
     if success:
         compute_order_totals(order_id)
     return success
 
 
+def _calculate_express_charge_for_quantity(total_qty: int, items: list) -> float:
+    if total_qty == 0:
+        return 0.0
+    elif total_qty <= 3:
+        return sum(float(item['subtotal']) for item in items)
+    elif total_qty <= 5:
+        return 15.0
+    elif total_qty <= 10:
+        return 25.0
+    else:
+        return 30.0
+
+
 def compute_order_totals(order_id: int) -> Dict[str, float]:
-    """
-    Recalculate totals for the order and update orders table.
-    Includes express charge calculation based on quantity.
-    Also updates customer ledger with charge entry when total changes.
-    (Feature 1d - ledger hook)
-    """
     conn = database.connect_db()
     cur = conn.cursor()
 
@@ -224,26 +186,23 @@ def compute_order_totals(order_id: int) -> Dict[str, float]:
         discount_amount = subtotal * (discount / 100.0)
     else:
         discount_amount = discount
-
     discount_amount = _round_money(discount_amount)
 
     express_charge_amount = 0.0
     if express_charge_enabled:
-        cur.execute("SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM order_items WHERE order_id = ?", (order_id,))
+        cur.execute(
+            "SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM order_items WHERE order_id = ?",
+            (order_id,)
+        )
         qty_row = cur.fetchone()
         total_qty = int(qty_row["total_qty"]) if qty_row else 0
 
-        if total_qty <= 3:
-            express_charge_amount = subtotal
-        elif total_qty <= 5:
-            express_charge_amount = 15.0
-        elif total_qty <= 10:
-            express_charge_amount = 25.0
-        else:
-            express_charge_amount = 30.0
+        cur.execute("SELECT quantity, unit_price, subtotal FROM order_items WHERE order_id = ?", (order_id,))
+        items = [dict(r) for r in cur.fetchall()]
+
+        express_charge_amount = _calculate_express_charge_for_quantity(total_qty, items)
 
     express_charge_amount = _round_money(express_charge_amount)
-    
     total_amount = _round_money(max(0.0, subtotal + express_charge_amount - discount_amount))
     balance = _round_money(max(0.0, total_amount - paid_amount))
 
@@ -254,28 +213,26 @@ def compute_order_totals(order_id: int) -> Dict[str, float]:
         "UPDATE orders SET total_amount = ?, balance = ? WHERE order_id = ?",
         (total_amount, balance, order_id),
     )
-    
+
     if abs(total_amount - prev_total) > 0.001:
         cur.execute(
             "DELETE FROM customer_ledger WHERE order_id = ? AND entry_type = 'charge'",
             (order_id,)
         )
-        
         cur.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
             (customer_id,)
         )
         running_before = float(cur.fetchone()[0])
-        
         cur.execute(
             """
-            INSERT INTO customer_ledger 
+            INSERT INTO customer_ledger
             (customer_id, order_id, entry_type, amount, running_balance, entry_date)
             VALUES (?, ?, 'charge', ?, ?, CURRENT_TIMESTAMP)
             """,
             (customer_id, order_id, total_amount, running_before + total_amount)
         )
-    
+
     conn.commit()
     conn.close()
 
@@ -289,15 +246,7 @@ def compute_order_totals(order_id: int) -> Dict[str, float]:
     }
 
 
-# ---------------------
-# Payment functions (updated with ledger hook)
-# ---------------------
 def record_payment(order_id: int, amount: float, notes: Optional[str] = None) -> int:
-    """
-    Record a payment for an order. Updates order.paid_amount and order.balance.
-    Also adds payment entry to customer ledger.
-    (Feature 1d - ledger hook)
-    """
     if amount <= 0:
         raise ValueError("Payment amount must be positive")
 
@@ -339,11 +288,11 @@ def record_payment(order_id: int, amount: float, notes: Optional[str] = None) ->
 
     cur.execute(
         """
-        INSERT INTO customer_ledger 
+        INSERT INTO customer_ledger
         (customer_id, order_id, entry_type, amount, running_balance, notes, entry_date)
         VALUES (?, ?, 'payment', ?, ?, ?, CURRENT_TIMESTAMP)
         """,
-        (customer_id, order_id, -float(amount), running_before - float(amount), 
+        (customer_id, order_id, -float(amount), running_before - float(amount),
          f"Payment ID: {payment_id}" + (f" - {notes}" if notes else ""))
     )
 
@@ -352,14 +301,7 @@ def record_payment(order_id: int, amount: float, notes: Optional[str] = None) ->
     return payment_id
 
 
-# ---------------------
-# Customer Ledger functions (Feature 1c)
-# ---------------------
 def get_customer_ledger(customer_id: int, limit: int = 50) -> List[Dict[str, Any]]:
-    """
-    Return the most recent `limit` ledger entries for a customer,
-    ordered by entry_date DESC.
-    """
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -379,10 +321,6 @@ def get_customer_ledger(customer_id: int, limit: int = 50) -> List[Dict[str, Any
 
 
 def get_customer_outstanding_balance(customer_id: int) -> float:
-    """
-    Return the current total outstanding balance for a customer.
-    Computed as SUM(amount) from customer_ledger.
-    """
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -395,21 +333,16 @@ def get_customer_outstanding_balance(customer_id: int) -> float:
 
 
 def post_ledger_charge(customer_id: int, order_id: int, amount: float, notes: str = None) -> int:
-    """
-    Insert a 'charge' ledger entry. Recalculates running_balance.
-    """
     conn = database.connect_db()
     cur = conn.cursor()
-    
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
     )
     running_before = float(cur.fetchone()[0])
-    
     cur.execute(
         """
-        INSERT INTO customer_ledger 
+        INSERT INTO customer_ledger
         (customer_id, order_id, entry_type, amount, running_balance, notes, entry_date)
         VALUES (?, ?, 'charge', ?, ?, ?, CURRENT_TIMESTAMP)
         """,
@@ -422,21 +355,16 @@ def post_ledger_charge(customer_id: int, order_id: int, amount: float, notes: st
 
 
 def post_ledger_payment(customer_id: int, order_id: int, amount: float, notes: str = None) -> int:
-    """
-    Insert a 'payment' ledger entry (amount stored as negative value).
-    """
     conn = database.connect_db()
     cur = conn.cursor()
-    
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
     )
     running_before = float(cur.fetchone()[0])
-    
     cur.execute(
         """
-        INSERT INTO customer_ledger 
+        INSERT INTO customer_ledger
         (customer_id, order_id, entry_type, amount, running_balance, notes, entry_date)
         VALUES (?, ?, 'payment', ?, ?, ?, CURRENT_TIMESTAMP)
         """,
@@ -449,25 +377,18 @@ def post_ledger_payment(customer_id: int, order_id: int, amount: float, notes: s
 
 
 def post_ledger_adjustment(customer_id: int, amount: float, notes: str, order_id: int = None) -> int:
-    """
-    Insert a manual 'adjustment' entry. amount may be positive or negative.
-    Only callable by admin/manager roles (enforcement in UI layer).
-    """
     if not notes or not notes.strip():
         raise ValueError("Notes are required for adjustment entries")
-    
     conn = database.connect_db()
     cur = conn.cursor()
-    
     cur.execute(
         "SELECT COALESCE(SUM(amount), 0) FROM customer_ledger WHERE customer_id = ?",
         (customer_id,)
     )
     running_before = float(cur.fetchone()[0])
-    
     cur.execute(
         """
-        INSERT INTO customer_ledger 
+        INSERT INTO customer_ledger
         (customer_id, order_id, entry_type, amount, running_balance, notes, entry_date)
         VALUES (?, ?, 'adjustment', ?, ?, ?, CURRENT_TIMESTAMP)
         """,
@@ -479,11 +400,7 @@ def post_ledger_adjustment(customer_id: int, amount: float, notes: str, order_id
     return ledger_id
 
 
-# ---------------------
-# Retrieval / Reporting
-# ---------------------
 def get_order_with_items(order_id: int) -> Dict[str, Any]:
-    """Return order with customer, items, and payments."""
     conn = database.connect_db()
     cur = conn.cursor()
 
@@ -514,7 +431,6 @@ def get_order_with_items(order_id: int) -> Dict[str, Any]:
 
 
 def get_orders_by_customer(customer_id: int) -> List[Dict[str, Any]]:
-    """Return all orders for a specific customer."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -532,7 +448,6 @@ def get_orders_by_customer(customer_id: int) -> List[Dict[str, Any]]:
 
 
 def list_orders_by_status(status: str) -> List[Dict[str, Any]]:
-    """Return orders that match a given status."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute("SELECT * FROM orders WHERE status = ? ORDER BY order_date DESC", (status,))
@@ -542,7 +457,6 @@ def list_orders_by_status(status: str) -> List[Dict[str, Any]]:
 
 
 def daily_report(date_str: str) -> Dict[str, Any]:
-    """Produce a simple daily report for orders on date_str."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -568,17 +482,9 @@ def daily_report(date_str: str) -> Dict[str, Any]:
     }
 
 
-# ---------------------
-# Date-Range Report functions (Feature 2a)
-# ---------------------
 def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
-    """
-    Return aggregated report data for orders whose order_date falls
-    within [date_from, date_to] inclusive.
-    """
     conn = database.connect_db()
     cur = conn.cursor()
-    
     cur.execute(
         """
         SELECT
@@ -592,7 +498,6 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
         (date_from, date_to),
     )
     summary = cur.fetchone()
-    
     cur.execute(
         """
         SELECT status, COUNT(*) as count
@@ -605,10 +510,9 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
     )
     status_rows = cur.fetchall()
     orders_by_status = {r["status"]: r["count"] for r in status_rows}
-    
     cur.execute(
         """
-        SELECT 
+        SELECT
           DATE(order_date) as date,
           COUNT(*) as order_count,
           COALESCE(SUM(total_amount), 0) as sales,
@@ -632,9 +536,7 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
         }
         for r in daily_rows
     ]
-    
     conn.close()
-    
     return {
         "date_from": date_from,
         "date_to": date_to,
@@ -648,10 +550,6 @@ def range_report(date_from: str, date_to: str) -> Dict[str, Any]:
 
 
 def list_orders_in_range(date_from: str, date_to: str) -> List[Dict[str, Any]]:
-    """
-    Return all orders (with customer name joined) where
-    DATE(order_date) BETWEEN date_from AND date_to, ordered by order_date ASC.
-    """
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -670,11 +568,7 @@ def list_orders_in_range(date_from: str, date_to: str) -> List[Dict[str, Any]]:
     return rows
 
 
-# ---------------------
-# Price Catalogue functions
-# ---------------------
 def get_all_prices() -> List[Dict[str, Any]]:
-    """Retrieve all items from price_catalogue table."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -690,7 +584,6 @@ def get_all_prices() -> List[Dict[str, Any]]:
 
 
 def get_price_item(item_name: str) -> Optional[Dict[str, Any]]:
-    """Get a single price item by name."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -707,7 +600,6 @@ def get_price_item(item_name: str) -> Optional[Dict[str, Any]]:
 
 
 def update_item_price(item_name: str, price_coloured: Optional[float], price_white: Optional[float], price_pressing: Optional[float]) -> bool:
-    """Update prices for an item in the catalogue."""
     conn = database.connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -724,11 +616,7 @@ def update_item_price(item_name: str, price_coloured: Optional[float], price_whi
     return success
 
 
-# ---------------------
-# Presentation helpers
-# ---------------------
 def format_invoice_number(order_id: int, order_date: Optional[str] = None) -> str:
-    """Format a human-friendly invoice number for display."""
     if order_date is None:
         conn = database.connect_db()
         cur = conn.cursor()
@@ -739,7 +627,6 @@ def format_invoice_number(order_id: int, order_date: Optional[str] = None) -> st
             order_date = r["order_date"]
         else:
             order_date = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
     date_part = order_date.split(" ")[0].replace("-", "")
     return f"ORD-{date_part}-{int(order_id):06d}"
 
@@ -799,5 +686,5 @@ if __name__ == "__main__":
     print(f"Customer {customer_id} outstanding balance: {balance}")
     ledger = get_customer_ledger(customer_id, limit=10)
     print(f"Ledger entries: {len(ledger)}")
-    
+
     print("\nQuick test harness finished.")

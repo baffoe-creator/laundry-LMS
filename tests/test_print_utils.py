@@ -36,3 +36,4 @@ def test_print_pdf_no_printer_raises_or_runs(tmp_path):
             print_utils.print_pdf(str(dummy))
         except RuntimeError:
             pytest.skip("pywin32 not available or printing not supported in this environment")
+            

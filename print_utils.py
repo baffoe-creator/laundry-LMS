@@ -13,7 +13,7 @@ Notes:
     pip install pywin32
 - Behavior:
     - If printer_name is None: use default printer (via ShellExecute 'print' or StartDocPrinter).
-    - If printer_name provided: use ShellExecute 'printto' to print to the specified printer.
+    - If printer_name provided: use ShellExecute 'print' to print to the specified printer.
 - Tests included will skip actual printing unless running on Windows and environment allows.
 
 Safety:
